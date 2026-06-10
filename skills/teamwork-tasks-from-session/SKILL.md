@@ -265,11 +265,21 @@ A cross-platform ISO-8601 → epoch parser (identical to the one in
 `teamwork-task` Step 5.5), used by several branches below:
 
 ```bash
+# TIMEZONE CONTRACT (critical): Teamwork RETURNS `timeLogged` in UTC (`Z`), so it
+# must be parsed AS UTC — `date -ju` (the `-u` is mandatory; the `Z` in the BSD
+# format is a literal, NOT a zone directive, so without `-u` BSD `date` reads the
+# wall-clock as LOCAL and the epoch is wrong by the local offset). The POST/PATCH
+# `time` field, however, is interpreted by Teamwork in the user's LOCAL/profile
+# timezone — so the absolute epoch is later formatted for the POST with LOCAL
+# `date -r` (Step 6.x), NEVER `date -ju`/`date -u`. Parse UTC, post local.
+# A no-`Z` local input (e.g. a `--start 2026-06-10T08:30:00` value) does not match
+# the `Z` branch and falls through to GNU `date -d` / Python, which treat a naive
+# timestamp as local — so adding `-u` here only affects genuine UTC inputs.
 parse_iso() {
   local raw norm out
   raw="$1"
   norm=$(printf '%s' "$raw" | sed -E 's/\.[0-9]+(Z|[+-][0-9:]{2,5})?$/\1/' | sed -E 's/[+-]00:?00$/Z/')
-  out=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$norm" +%s 2>/dev/null)  && { [ -n "$out" ] && echo "$out" && return 0; }
+  out=$(date -ju -f "%Y-%m-%dT%H:%M:%SZ" "$norm" +%s 2>/dev/null)  && { [ -n "$out" ] && echo "$out" && return 0; }
   out=$(date -j -f "%Y-%m-%dT%H:%M:%S%z" "$raw"  +%s 2>/dev/null) && { [ -n "$out" ] && echo "$out" && return 0; }
   out=$(date -d "$raw" +%s 2>/dev/null)                          && { [ -n "$out" ] && echo "$out" && return 0; }
   out=$(python3 - "$raw" <<'PY' 2>/dev/null
@@ -720,6 +730,9 @@ else
   TIMELOG_SUB_ROUND=1
 fi
 
+# LOCAL formatting on purpose: Teamwork interprets the POST `time` field in the
+# user's local/profile timezone (inverse of `timeLogged`, which is UTC). Never
+# switch to `date -ju`/`date -u` here — see the TIMEZONE CONTRACT note on parse_iso.
 LOG_DATE=$(date -r "$PROPOSED_START" +%Y-%m-%d 2>/dev/null || date -d "@$PROPOSED_START" +%Y-%m-%d)
 LOG_TIME=$(date -r "$PROPOSED_START" +%H:%M:%S 2>/dev/null || date -d "@$PROPOSED_START" +%H:%M:%S)
 ```

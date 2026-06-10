@@ -4,6 +4,20 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-06-10
+
+### Fixed
+
+- **Time logs no longer land hours early / overlap (timezone bug).** `parse_iso`
+  parsed the UTC `timeLogged` returned by Teamwork with macOS BSD `date -j -f
+  "…Z"` **without `-u`**, reading the wall-clock as local and shifting the logged
+  block by the local UTC offset. The BSD `Z` branch now uses `date -ju`. Added a
+  **TIMEZONE CONTRACT** note clarifying that `timeLogged` is returned in UTC but
+  the POST/PATCH `time` field is interpreted in the user's local timezone — so
+  parse UTC (`date -ju`), post local (`date -r`, no `-u`). A no-`Z` `--start`
+  value still falls through to the local-aware GNU/Python paths, so it is
+  unaffected by the change.
+
 ## [1.0.0] — 2026-06-10
 
 ### Added
