@@ -1,0 +1,16 @@
+{
+  "description": "Records the wall-clock start of each Claude Code session so the /teamwork-tasks-from-session skill can later propose logging time from when the session actually started. Writes a single TSV row to the shared Teamwork config dir; emits no context and always exits 0.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/record-session-start.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "teamwork": {
+    "base_url": "https://<workspace>.teamwork.com",
+    "api_token": ""
+  },
+
+  "default_language": "sk",
+
+  "time_rounding_minutes": 5,
+  "round_threshold_minutes": 4,
+  "min_log_minutes": 1,
+  "time_cursor_strategy": "last_teamwork_timelog",
+  "include_commit_hash_in_log_description": true,
+  "is_billable_by_default": true,
+
+  "session_skill": {
+    "write_back_mode": "ask_each",
+    "description_format": "wame_canonical",
+
+    "sections": {
+      "preamble_label": "",
+      "acceptance_label_sk": "Akceptačné kritériá",
+      "acceptance_label_en": "Acceptance criteria",
+      "goal_label_sk": "Cieľ",
+      "goal_label_en": "Goal",
+      "tech_label_sk": "Technický popis",
+      "tech_label_en": "Technical plan",
+      "source_label_sk": "Zdroj",
+      "source_label_en": "Source",
+      "hr_marker": "---"
+    },
+
+    "estimate": {
+      "methodology": "wame_senior_claude_code",
+      "set_if_missing": true,
+      "buffer_pct_min": 15,
+      "buffer_pct_max": 30,
+      "speedup_pct_min": 30,
+      "speedup_pct_max": 50,
+      "step_minutes": 15,
+      "max_task_minutes": 480
+    },
+
+    "subtasks": {
+      "enabled": true,
+      "propose_split_threshold_minutes": 240,
+      "min_split_subtasks": 2,
+      "max_split_subtasks": 6,
+      "role_prefixes": ["BE", "FE", "QA", "Migration", "DevOps"]
+    },
+
+    "assignee": {
+      "default_to_me": true,
+      "ask": true,
+      "allow_empty": true
+    },
+
+    "clarifying_questions": {
+      "max_per_run": 6,
+      "fold_into_description": true,
+      "leave_unresolved_as_open_marker": "[OTVORENÉ]"
+    },
+
+    "session_start": {
+      "detection_order": ["hook", "last_timelog", "transcript", "ask"],
+      "hook_enabled": true,
+      "sessions_log_relpath": "sessions/starts.tsv",
+      "constrain_today": true,
+      "ignore_sources": ["compact"],
+      "max_session_hours_warn": 6
+    },
+
+    "time_log": {
+      "enabled": true,
+      "log_target": "primary_task",
+      "avoid_overlap": true,
+      "confirm_before_log": true
+    },
+
+    "board": {
+      "after_create": "ask",
+      "in_progress_stage": "In progress",
+      "done_stage": "Internal testing",
+      "done_stage_fallbacks": ["Testing"],
+      "match_mode": "case_insensitive"
+    },
+
+    "link_session": {
+      "include_commits": true,
+      "include_branch": true,
+      "max_commits_listed": 20
+    },
+
+    "task_create_estimate_field": "estimatedMinutes",
+
+    "timing": {
+      "report_run_duration": true,
+      "duration_format": "human"
+    }
+  }
+}
