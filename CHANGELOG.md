@@ -4,6 +4,15 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-06-11
+
+### Changed
+
+- **Removed the `version` field from the SKILL.md frontmatter** — `plugin.json`
+  is now the single source of truth for the plugin version. The frontmatter
+  value had silently gone stale at `1.0.0` while the plugin shipped `1.0.1`;
+  dropping the field removes that recurring footgun.
+
 ## [1.0.1] — 2026-06-10
 
 ### Fixed
