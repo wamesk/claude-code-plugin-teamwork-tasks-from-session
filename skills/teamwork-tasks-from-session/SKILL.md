@@ -1,6 +1,6 @@
 ---
 name: teamwork-tasks-from-session
-description: "Use when the user has been solving something directly in a Claude Code session (often before any task existed) and asks to 'vytvor task z tejto session', 'vytvor teamwork task zo session', 'zaloguj túto session ako task', 'sprav task z toho čo sme robili', 'z tejto session vytvor task a zaloguj čas', 'create a task from this session', 'log this session as a task', or invokes '/teamwork-tasks-from-session'. Reconstructs what the session accomplished — git commits + working-tree diff made since the session started, changed files, repo shape, and the live conversation context — and drafts a Teamwork.com Projects task in the canonical WAME format ([preamble] → HR → Akceptačné kritériá → HR → Cieľ → HR → Technický popis, the same Plan-Mode technical write-up produced by teamwork-task-analyze), with optional 2–6 atomic subtasks and a WAME senior-engineer-with-Claude-Code estimate. Detects the session start from a bundled SessionStart hook (fallbacks: end of today's last timelog → newest session transcript timestamp → ask) and logs the real session duration back to Teamwork as one sequential, non-overlapping, 5-minute-aligned entry — always shown as an editable proposal first, clamped so it never overlaps an existing timelog. If no Teamwork URL is passed it asks where to file the work; a project/tasklist URL creates a new main task, a single-task URL files the work as a subtask of that task. Asks via AskUserQuestion which Teamwork email to assign the task to (you by default, unassigned, or a custom email resolved via people.json). Everything is shown in a full preview + confirmation gate before any write; after creation the skill asks what to do with the board (leave / move In progress → Internal testing / complete). Reuses the shared API token config with the rest of the Teamwork plugin family. Never runs git, never logs time without confirmation, never writes an overlapping time log, never silently overwrites an estimate."
+description: "Use when the user has been solving something directly in a Claude Code session (often before any task existed) and asks to 'vytvor task z tejto session', 'vytvor teamwork task zo session', 'zaloguj túto session ako task', 'sprav task z toho čo sme robili', 'z tejto session vytvor task a zaloguj čas', 'create a task from this session', 'log this session as a task', or invokes '/teamwork-tasks-from-session'. Reconstructs what the session accomplished — git commits + working-tree diff made since the session started, changed files, repo shape, and the live conversation context — and drafts a Teamwork.com Projects task in the canonical WAME format ([preamble] → HR → Akceptačné kritériá → HR → Cieľ → HR → Technický popis, the same Plan-Mode technical write-up produced by teamwork-task-analyze), with optional 2–6 atomic subtasks and a `wame-estimate-v2` estimate shown next to the real logged session time. Detects the session start from a bundled SessionStart hook (fallbacks: end of today's last timelog → newest session transcript timestamp → ask) and logs the real session duration back to Teamwork as one sequential, non-overlapping, 5-minute-aligned entry — always shown as an editable proposal first, clamped so it never overlaps an existing timelog. If no Teamwork URL is passed it asks where to file the work; a project/tasklist URL creates a new main task, a single-task URL files the work as a subtask of that task. Asks via AskUserQuestion which Teamwork email to assign the task to (you by default, unassigned, or a custom email resolved via people.json). Everything is shown in a full preview + confirmation gate before any write; after creation the skill asks what to do with the board (leave / move In progress → Internal testing / complete). Reuses the shared API token config with the rest of the Teamwork plugin family. Never runs git, never logs time without confirmation, never writes an overlapping time log, never silently overwrites an estimate."
 argument-hint: "[<projects-or-tasklist-or-task-url>] [--assignee=<email>] [--no-subtasks] [--language=sk|en] [--write-back=ask|auto|never] [--start=<ISO|HH:MM|\"NNm ago\">] [--board=ask|leave|move-done|complete] [--log-time=true|false] [--max-questions=N]"
 allowed-tools: [Bash, Read, Write, Edit, Grep, Glob, AskUserQuestion]
 ---
@@ -159,14 +159,17 @@ jq '
 | .session_skill.sections.source_label_en             //= "Source"
 | .session_skill.sections.hr_marker                   //= "---"
 | .session_skill.estimate                             //= {}
-| .session_skill.estimate.methodology                 //= "wame_senior_claude_code"
+| .session_skill.estimate.methodology                 //= "wame_estimate_v2"
 | .session_skill.estimate.set_if_missing              //= true
-| .session_skill.estimate.buffer_pct_min              //= 15
-| .session_skill.estimate.buffer_pct_max              //= 30
-| .session_skill.estimate.speedup_pct_min             //= 30
-| .session_skill.estimate.speedup_pct_max             //= 50
 | .session_skill.estimate.step_minutes                //= 15
 | .session_skill.estimate.max_task_minutes            //= 480
+# v2 estimates one number directly — the speedup/buffer multipliers are gone.
+# Delete them from configs written by 1.0.x so a stale `buffer_pct_max` does
+# not sit in the file reading like a rule somebody still follows.
+| .session_skill.estimate |= del(.buffer_pct_min, .buffer_pct_max,
+                                 .speedup_pct_min, .speedup_pct_max)
+| (if .session_skill.estimate.methodology == "wame_senior_claude_code"
+   then .session_skill.estimate.methodology = "wame_estimate_v2" else . end)
 | .session_skill.subtasks                             //= {}
 | .session_skill.subtasks.enabled                     //= true
 | .session_skill.subtasks.propose_split_threshold_minutes //= 240
@@ -621,15 +624,23 @@ force-split** small sessions.
 
 ### Step 6.4 — Estimate
 
-Use the **WAME methodology** (full text at the bottom of this document): start
-from a senior-engineer estimate, apply 30–50 % Claude-Code speedup, add 15–30 %
-buffer, round to `estimate.step_minutes` (15), cap at `estimate.max_task_minutes`
-(480). When there are subtasks, the main estimate is the **sum** of subtask
+Use the **WAME methodology** (full text at the bottom of this document): one
+number per task, picked against the anchors there, rounded to
+`estimate.step_minutes` (15) and capped at `estimate.max_task_minutes` (480).
+There is no speedup factor and no buffer percentage — version 2 removed both.
+When there are subtasks, the main estimate is the **sum** of the subtask
 estimates.
 
-The estimate is the *methodology* number (what the work "should" cost); it is
-**independent** of the logged session time (what it actually took this run).
-Both appear in the preview — that contrast is useful, not a bug.
+The estimate is the *methodology* number — what this work should cost the next
+time somebody does it. The logged time is what it actually took this run. They
+are independent and both appear in the preview.
+
+**This skill is where the methodology gets its evidence.** It is the only plugin
+in the family that puts an estimate and a measured duration next to each other on
+the same piece of work. Say so in the preview when they differ by more than half:
+one line naming the anchor you used and the real number. When the same kind of
+work drifts the same way several runs in a row, the fix is to move that anchor in
+the methodology block — never to re-introduce a buffer percentage.
 
 ---
 
@@ -1173,40 +1184,82 @@ from the **next** Claude Code session (after a restart).
 
 ## WAME estimate methodology
 
-We estimate as senior engineers using Claude Code as a force multiplier.
+> Block version `wame-estimate-v2`. Shared **verbatim** across the plugins
+> `teamwork-task-analyze`, `teamwork-tasks-from-dnr`, `teamwork-tasks-from-desk`,
+> `teamwork-tasks-from-session` and `dnr-business`. Change it in all five or in
+> none — a per-plugin variant is how two skills start quoting different numbers
+> for the same task.
 
-Baseline assumptions:
-- Engineer is senior in the stack of the current repo
-- Claude Code handles boilerplate / scaffolding / repetitive edits
-- Test scaffolding (Pest/PHPUnit/Vitest/Playwright) is mostly LLM-generated
-- Code review and QA are done by the same engineer (no separate review cycle)
+**Estimate one number, directly.** Do not produce a "traditional" estimate and
+then multiply it by a speedup and a buffer. Two percentages stacked on a guess
+open a band almost twice as wide as the guess itself, and in a negotiation the
+widest end of that band always wins. Name the minutes the work takes and defend
+that number.
 
-Speedup vs a traditional estimate: ~30–50 % faster — apply that reduction first.
+**Who does the work.** A senior engineer who already knows this codebase,
+directing Claude Code. Claude Code writes the implementation and the tests; the
+engineer decides, reviews and runs the suite. There is no separate QA pass and
+no handover to a second person.
 
-Buffer policy: after the reduction, add 15–30 % buffer for unknown unknowns
-(undocumented APIs, hidden coupling), environment friction (failing CI, flaky
-local setup), and review feedback that costs more than one cycle.
+**What the number covers**
 
-The final number must be a multiple of 15 minutes, at least 15 minutes for
-trivial work, and at most 8 hours (480 min) per single task — bigger work must
-be split into subtasks (Step 6.3).
+- Reading the relevant code and reproducing the reported behaviour
+- The implementation itself
+- Writing or extending the test, and running the affected tests
+- Self-review and the fixes it produces
+- One round of review feedback
 
-Calibration anchors (sanity check, not a lookup table; minutes, post-speedup,
-post-buffer):
+**What the number never covers** — estimate each of these as its own task instead
+of folding it in
 
-| Work type | Estimate |
+- Deployment, running the migration on production, fixing production data
+- Talking to the client or the PO, and waiting for the answer
+- Any work that sits behind an unanswered `[OTVORENÉ]` question
+- Anything the task itself declares out of scope
+
+**Shape of the number**
+
+- A multiple of 15 minutes. Never below 15.
+- Above 240 minutes: propose a split into 2–6 atomic subtasks. That threshold is
+  `propose_split_threshold_minutes` and it is the real ceiling in daily use.
+- 480 minutes is a hard cap. Work that will not fit under it is not a task yet.
+
+**Anchors.** These are finished outcomes, not categories of feeling. Pick the
+closest line and move by at most one 15-minute step. If the number you want is
+more than one step away from every anchor, write down in the reasoning what makes
+this case different — that sentence is what a reviewer checks.
+
+| Finished work | Minutes |
 |---|---|
-| Trivial copy / label change | 15 |
-| Bug fix with known repro | 30–60 |
-| Single-model CRUD endpoint + Pest test | 60–120 |
-| New Vue/React component wired to existing API | 60–120 |
-| New module in `wamesk/*` (model + migration + controller + tests) | 240–360 |
-| DB schema migration with data backfill | 180–300 |
-| Bug fix without repro / investigation | 120–360 |
+| Text, label, translation key or config value, plus the test that guards it | 15 |
+| One field, filter or validation rule on one screen, plus a test | 30 |
+| Bug with a stack trace or a one-line repro: fix plus regression test | 60 |
+| Vue/React component wired to an API that already exists, plus a test | 90 |
+| Bug that reproduces but spans 2–3 layers: fix plus tests | 120 |
+| One CRUD endpoint or one screen end to end, plus tests | 120 |
+| Bug with no repro yet: investigate, then fix | 180 |
+| Schema migration with a data backfill and a copy-back assertion | 180 |
+| New module in `wamesk/*` (model, migration, Nova screen, policy, tests) | 300 |
 
-Remember: this methodology number is the task's **estimate**; the **logged**
-time is the real session duration from Step 9. They are reported side by side on
-purpose.
+**Uncertainty is an open question, not a surcharge.** When you cannot size the
+work, you have found something the task does not say yet. Write that question
+into the task, estimate the investigation that answers it, and state in the
+reasoning what the fix costs under each likely answer. A number with a written
+assumption survives review. A number padded for "unknown unknowns" does not, and
+it hides the question that was worth asking.
+
+**Do not pad a task because it is labelled TBD**, and do not shrink a real
+multi-layer bug so the list looks cheap. Both errors cost the same trust.
+
+**Why this replaced the old rule.** Hand-written estimates used to run about
+twice the real cost, which lost us work we should have won. The first fix was a
+30–50 % speedup factor with a 15–30 % buffer on top — but that chain put the
+padding straight back while sounding rigorous, and it produced a 0.58×–0.91×
+band on every single task. The anchors above carry the same judgement as one
+number. The measured feedback loop is the `teamwork-tasks-from-session` plugin,
+which shows the methodology estimate and the real logged session time side by
+side. When those two drift apart on the same kind of work, change the anchors
+here — never re-introduce a buffer percentage.
 
 ---
 

@@ -4,6 +4,44 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-22
+
+### Changed
+- **Estimate methodology replaced — `wame-estimate-v2`.** The old rule produced a
+  "traditional" estimate, cut it by 30–50 % for Claude Code, then added a 15–30 %
+  buffer on top. Two percentages stacked on a guess give a 0.58×–0.91× band on
+  every task, so the same work could legitimately be quoted at 60 or at 95
+  minutes and the wider end always won the argument. The methodology now
+  estimates **one number directly** against a table of finished-outcome anchors.
+  The anchors are tighter (a single figure each, adjust by at most one 15-minute
+  step) and the block states explicitly what the number covers — reproduce,
+  implement, test, run the suite, self-review, one review round — and what it
+  never covers: deployment, production data fixes, client communication, and any
+  work behind an unanswered `[OTVORENÉ]` question.
+- **Uncertainty is now an open question, not a surcharge.** Where the old text
+  told you to pad for "unknown unknowns", the new one tells you to write the
+  question into the task, estimate the investigation that answers it, and state
+  what the fix costs under each answer.
+- **The 240-minute split threshold is now named as the working ceiling**, so it
+  no longer contradicts the 480-minute hard cap sitting in the same paragraph.
+- The methodology block is byte-identical across `teamwork-task-analyze`,
+  `teamwork-tasks-from-dnr`, `teamwork-tasks-from-desk`,
+  `teamwork-tasks-from-session` and `dnr-business`, and now carries a version
+  marker so a drifted copy is visible.
+- Step 6.4 now states why this plugin matters to the methodology: it is the only
+  one in the family that puts an estimate and a **measured** duration next to
+  each other on the same work. When they differ by more than half, the preview
+  says so in one line — the anchor used and the real number. Repeated drift on
+  the same kind of work is the signal to move an anchor in the methodology block,
+  never to bring a buffer percentage back.
+
+### Removed
+- Config keys `estimate.buffer_pct_min`, `estimate.buffer_pct_max`,
+  `estimate.speedup_pct_min` and `estimate.speedup_pct_max`. The config
+  migration deletes them from files written by earlier versions and renames
+  `methodology` from `wame_senior_claude_code` to `wame_estimate_v2` — a stale
+  `buffer_pct_max` left in the file reads like a rule somebody still follows.
+
 ## [1.0.2] — 2026-06-11
 
 ### Changed

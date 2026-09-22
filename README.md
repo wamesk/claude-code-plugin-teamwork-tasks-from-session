@@ -108,7 +108,7 @@ The skill then walks you through:
 5. **Proposes subtasks** only when the estimate exceeds 240 min and the work
    has natural cut points (BE/FE/QA/Migration/DevOps role prefixes).
 6. **Estimates** via the WAME senior-engineer-with-Claude-Code methodology
-   (30–50 % speedup, 15–30 % buffer, 15 min step, 480 min cap per task).
+   (one number per task against the anchors, 15 min step, split above 240 min, 480 min cap).
 7. **Asks clarifying questions** via `AskUserQuestion` (batches of 4, max 6 per
    run); folds answers into AC / Cieľ / Technický popis; preserves anything
    unresolved as `[OTVORENÉ]` markers.
