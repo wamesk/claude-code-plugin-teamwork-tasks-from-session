@@ -561,6 +561,14 @@ In subtask mode, prefix with a role tag when obvious (`[BE]`, `[FE]`, …).
 
 ### Step 6.2 — Description (canonical WAME format)
 
+**The estimate never appears in the description or in the title.** The minutes
+belong in the Teamwork estimate field (`estimatedMinutes`, Step 11) and nowhere
+else — an estimate duplicated into prose has to be edited in two places and the
+two then disagree. Do not write `Odhad: <N> min`, `Estimate: <N>h`, or any
+minute/hour figure into the preamble, the AC, the Goal, the technical section,
+or the `### {SRC_LABEL}` footer. Showing it in the Step 10 preview and the
+Step 15 report is correct and stays.
+
 ```
 [optional preamble — only if there is genuinely useful free-text context that
 does not fit the structured sections; otherwise omit entirely]
@@ -619,8 +627,9 @@ Propose subtasks **only** when **all** are true:
 
 Each subtask: a `[BE]/[FE]/[QA]/[Migration]/[DevOps]` prefix + business name, its
 own canonical description (no preamble, no `### {SRC_LABEL}` — only the primary
-task carries the source block), and its own estimate. Count 2–6. **Never
-force-split** small sessions.
+task carries the source block), and its own estimate **written to the
+`estimatedMinutes` field only, never into the subtask name or its description**.
+Count 2–6. **Never force-split** small sessions.
 
 ### Step 6.4 — Estimate
 
@@ -1111,8 +1120,20 @@ fi
 - Never invents time when the computed duration is ~0 — it asks instead
 - Never silently overwrites an estimate (the estimate is on a *new* task; there
   is nothing to overwrite, and the methodology number is always shown)
+- Never writes the estimate into the task **title** or **description** — the
+  minutes go to the `estimatedMinutes` field only (Step 11 / Step 12). The
+  preview (Step 10) and the final report (Step 15) may show it; the task body
+  may not.
 - Never moves the board or completes the task without asking (default
   `board.after_create == ask`)
+- Never edits an existing task's description. This skill only **creates** tasks;
+  it never PATCHes a description it did not write. A Teamwork description can
+  carry inline screenshots as Markdown image links
+  (`![image.png](https://tw-inlineimages.s3-accelerate.amazonaws.com/...)`) that
+  exist nowhere else in the task — rewriting a description deletes them. If a
+  future version ever needs to touch an existing description, it must carry the
+  original text, its image links and its attachment references forward **byte
+  for byte**, and append only.
 - Never sends anything to a customer or to Teamwork Desk
 - Never echoes the API token
 
@@ -1179,6 +1200,64 @@ last-timelog / transcript / ask chain instead.
 
 Because hooks load at session start, installing the plugin only starts recording
 from the **next** Claude Code session (after a restart).
+
+---
+
+## Task record rules
+
+> Block version `wame-task-record-v1`. Shared **verbatim** across the plugins that write a Teamwork
+> task — `teamwork-task-analyze`, `teamwork-tasks-from-desk`, `teamwork-tasks-from-session` and
+> `teamwork-tasks-from-dnr`. Change it in all of them or in none.
+
+### The estimate lives in the estimate field, and nowhere else
+
+Never write minutes or hours into a task's **title** or **description**. Not in the preamble, not
+inside the technical plan, not as a footer line under it.
+
+The reason is maintenance, not taste. An estimate gets revised — after the first hour of work, after
+a clarifying answer comes back, after the task is split into subtasks. A number that also sits in
+prose has to be found and changed in every copy it was written to, and the copy somebody misses is
+the one the next reader believes. One field, one number, nothing to reconcile.
+
+This binds every surface that writes a task:
+
+- the description body, including any `**Odhad:** … min` or `**Estimate:** … min` line
+- the task title, including a `(120 min)` or `· 2h` suffix
+- the description column of a generated import file
+- a subtask's title and description, on the same terms as the parent
+
+Where the estimate belongs instead: the API estimate field — `estimateMinutes` on a v3 read,
+`estimatedMinutes` on a v3 create, `estimated-minutes` on the classic v1 update.
+
+Where it is still fine to show: the terminal preview, the confirmation gate, the final report, and
+any companion document that is not the task itself — a Desk internal note, a Markdown plan sitting
+next to an XLSX. Those are read once and thrown away. The task record is not.
+
+### Never lose what the reporter wrote
+
+When this skill rewrites an **existing** task description, everything already there survives
+**verbatim** at the top, above the first `---`.
+
+- **Inline images.** A screenshot pasted into a Teamwork description is ordinary Markdown:
+  `![image.png](https://tw-inlineimages.s3-accelerate.amazonaws.com/…)`. It is **not** a separate
+  attachment, and Teamwork shows it **nowhere else** — `GET /projects/api/v3/tasks/{id}/files.json`
+  returns nothing for it. Dropping that link deletes the screenshot from the task. This is not
+  hypothetical: one run stripped the image links out of 18 descriptions on the assumption that
+  Teamwork rendered them separately, and destroyed 25 screenshots. They came back only because the
+  original text happened to still be in a scratch file.
+- **The reporter's own wording, spelling and punctuation.** Do not add diacritics, do not fix
+  grammar, do not translate, do not tighten, do not re-order. A bug report is the record of what
+  somebody saw and how they described it. A tidied version is no longer that record, and the tester
+  cannot recognise their own report in it.
+- **Links, lists, line breaks, and any HTML that is already there.** Pass the block through
+  untouched.
+
+Before writing, read the current description. After composing the new one, check that the old text
+still occurs inside it character for character. When it does not, you are about to delete somebody's
+work — stop and ask the user instead of writing.
+
+Attachments and comments are separate records and this skill never touches them. If a change would
+need one removed, that is a question for the user, not a step in the plan.
 
 ---
 

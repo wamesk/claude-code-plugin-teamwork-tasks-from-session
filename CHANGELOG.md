@@ -4,6 +4,30 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-09-22
+
+### Changed
+- **Two new rules, shared verbatim as the `wame-task-record-v1` block.**
+  1. *The estimate lives in the estimate field, and nowhere else.* Minutes never go
+     into a task title or description — not in the preamble, not in the technical
+     plan, not as a footer line. An estimate gets revised, and a number duplicated
+     into prose has to be changed in every copy; the copy somebody misses is the one
+     the next reader believes. Previews, confirmation gates, final reports and
+     companion documents may still show it — those are read once and thrown away.
+  2. *Never lose what the reporter wrote.* When an existing description is rewritten,
+     everything already there survives verbatim at the top: inline images, links, the
+     reporter's own wording, spelling and punctuation. No diacritics added, no grammar
+     fixed, no translation, no tidying.
+- Step 6.2's description template, Step 6.3's subtask sentence and the Hard boundaries
+  list now say where the estimate goes. The plugin had no violation — it writes the
+  number only to `estimatedMinutes` — but nothing forbade one, and the Step 10 preview
+  renders `**Odhad (metodika):** <EST> min`, which is the prose shape that bleeds into a
+  free-form preamble.
+- The Hard boundaries list gained the preservation rule. The plugin only ever POSTs new
+  tasks today, so nothing is at risk — but the obvious next feature for subtask mode,
+  linking the new subtask from the parent description, is exactly the edit that strips
+  inline images.
+
 ## [1.1.0] — 2026-09-22
 
 ### Changed

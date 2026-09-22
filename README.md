@@ -135,6 +135,11 @@ The skill then walks you through:
 - Never logs time without an explicit confirmation
 - Never writes a time log that overlaps an existing entry
 - Never silently overwrites an estimate
+- Never writes the estimate into the task title or description — it goes to the
+  Teamwork `estimatedMinutes` field only (the preview and the final report show
+  it, the task body does not)
+- Never edits an existing task's description (it only creates tasks), so it can
+  never strip inline screenshots or attachment links out of somebody else's task
 - Never sends anything to a customer or to Desk
 - Never moves the board or completes the task without asking (default
   `board.after_create = ask`)
