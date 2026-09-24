@@ -4,6 +4,171 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-09-24
+
+Source: reported in a colleague's "Štyri cesty k nule" analysis, which traced a
+family of *silent* failures in the Teamwork plugins to v3 fields that do not exist
+and to bash-only snippets running under zsh. This plugin had its own instances of
+both.
+
+### Fixed
+- **No task could be created from zsh or macOS bash 3.2.** Steps 11 and 12 spliced
+  `${PRIMARY_NAME@Q}`, `${SUB_NAME@Q}` and `${SUB_RESP@Q}` into Python source. `@Q`
+  is bash 4.4+ only: zsh (what Claude Code's Bash tool runs on macOS) and the
+  stock `/bin/bash` 3.2 both answer `bad substitution`, so the `python3` heredoc
+  never ran, the POST went out with an empty payload file, and the idempotency
+  probe failed the same way — the run ended in "Primary task creation failed".
+  On bash 4.4+ it ran, but shell quoting is not Python quoting, so a crafted task
+  name could break out of the string. Name and description now travel through
+  temp files, the subtask response through stdin — the pattern
+  `teamwork-tasks-from-desk` adopted in 1.0.2.
+  Repro: `zsh -c 'N=x; python3 - <<PY
+print(${N@Q})
+PY'` → `zsh:1: bad substitution`.
+- **Subtask mode lost the project, and the board move could target a stranger's
+  board.** Step 5.4 read `PROJECT_ID` from `.task.projectId`; v3 task objects have
+  no such key, so it was always empty. Step 14.1 then asked
+  `workflows.json?projectIds=` — which is not an error: it answers HTTP 200 with the
+  first 50 workflows of the whole workspace, none of them this project's, and their
+  pooled stages include `Testing`. `.workflows[0]` was therefore another project's
+  workflow. Now `PROJECT_ID` comes from `.task.projectId // .task.tasklist.meta.projectId
+  // included.tasklists[].projectId`, the move is skipped with a warning when it is
+  still empty, only a workflow whose `projectIds` lists the project is used, and
+  stage names are resolved among that workflow's own stages only.
+  Repro (read-only): `GET /projects/api/v3/tasks/45198800.json?include=tasklists,projects`
+  → `.task.projectId` = `null`, new expression = `700336`;
+  `GET /projects/api/v3/workflows.json?projectIds=&include=stages` → 200, 50
+  workflows, first one `8105 "1Plus1 - 634056"`.
+- **The project name was always blank for tasklist and task URLs.** `.tasklist.project`
+  is only an `{id, type}` reference, so `.tasklist.project.name` never existed. The
+  tasklist lookup now asks `?include=projects` and reads
+  `.included.projects["<id>"].name`; subtask mode also fills `TASKLIST_NAME` from
+  `.task.tasklist.meta.name`. The Step 10 preview shows both again.
+  Repro: `GET /projects/api/v3/tasklists/3361804.json` → `.tasklist.project` =
+  `{"id":700336,"type":"projects"}`.
+- **The overlap clamp had no anchor when the SessionStart hook won.** Step 3.2 read
+  today's last timelog only when no hook record existed, yet Step 9 clamps against
+  its end. The read now runs whenever the user is known, so a session that began
+  before the last logged block ended is clamped instead of billed twice.
+- **Failed reads looked like empty results.** `me.json`, `time.json`, the target
+  lookups and `people.json` did not check the HTTP status, so a 401/404/400 body was
+  parsed as "no user / no timelog / no match". Every GET now captures the status and
+  prints a `⚠` line naming the endpoint and the fallback; target lookups stop.
+- **"Mark complete" reported success it did not have.** Step 14.2 ran
+  `curl … >/dev/null && BOARD_RESULT="completed"`; curl exits 0 on an HTTP error, so
+  a 401 / 403 / 404 was reported as "completed". It now judges the status code and
+  reports `complete failed (HTTP <code>)` with the response body.
+- **The transcript fallback aborted in zsh when no transcript existed** —
+  `ls -t "$PROJ_DIR"/*.jsonl` is a `no matches found` error before `2>/dev/null`
+  applies. Replaced with `find`.
+- **A `false` in the config flipped back to `true` on every run.** Step 2.5
+  defaulted every boolean with `//=`, and jq's `//` treats `false` like a missing
+  value. So `is_billable_by_default: false` and
+  `include_commit_hash_in_log_description: false` — keys `teamwork-task` owns in
+  the same shared file — became `true` whenever this plugin ran, and the session
+  time went out billable. The plugin's own switches (`time_log.enabled`,
+  `assignee.ask`, `session_start.hook_enabled`, …) could not be turned off
+  either. Booleans now default only when absent (`null`), and the Step 3, 9, 13
+  and 15 reads no longer use `// true`.
+  Repro: `jq -n '{is_billable_by_default: false} | .is_billable_by_default //= true'`
+  → `{"is_billable_by_default": true}`.
+- The assignee email was spliced into the jq program text; it is now a `--arg`.
+- `LANG` was overwritten with the description language (`sk`), handing every later
+  command in that shell an invalid locale. Renamed to `DESC_LANG`.
+
+### Added
+- **Cross-cutting requirements in the drafted task** (Step 6.2a). The acceptance
+  criteria gain a `### Prierezové požiadavky` sub-block with the dimensions that
+  apply — `reachability` (a new screen is reachable from the menu and from the
+  related screens), `security` (new actions behind the same gate plus an
+  object-scoped check), `performance` (lists and exports at real data volume) and
+  `ui_ux` — named with the same keys `teamwork-task-test` 1.1.0 uses at QA time.
+  Because this skill describes work that is already done, an item is stated as
+  delivered only when the diff or the conversation proves it (with the evidence
+  cited); applicable items the session did not cover are listed as
+  *nepokryté v tejto session*, never claimed, and surfaced in the preview and the
+  board question. Every box stays `- [ ]`; the sub-block sits before the first `---`
+  so `teamwork-task-test` can tick it. The technical section gains a short
+  `### Kvalita` subsection. Questions about these count against the existing max-6
+  budget.
+- **Framework versions and idioms in the technical plan** (Step 6.2b, key
+  `framework`). Step 4.2 now also reads the installed versions with a zsh/bash-safe
+  snippet, in the nearest directory up to the git root that holds a manifest (the
+  app may sit in a subdirectory of the repo). It reads `composer.json`
+  (`config.platform.php` / `require.php`), `composer.lock` (Laravel, Nova, Livewire,
+  Inertia, Pest), `package-lock.json` (lockfile v1–v3) or the declared range in
+  `package.json` (Vue, Nuxt, React, Ionic, Inertia, Tailwind CSS, Vite, TypeScript),
+  `browserslist` and `.nvmrc`. The `### Kvalita` subsection then gets one
+  `Framework:` line recording what the session **actually used**: those versions
+  plus the version-specific idioms the diff shows, each cited by `path:line`. Why:
+  the other plugins now build in the installed version's idioms and
+  `teamwork-task-test` reviews them, so the record of a session should say which
+  ones it used — and never claim one it did not. Whether something is deprecated
+  or newer than installed is checked in current docs (Boost `search-docs`,
+  context7, official docs), not from memory. What the diff could do better is a
+  "suggestion for a later refactor", never open work or part of the estimate; a
+  feature newer than the installed version goes under *Edge cases & risks*
+  because it will not run. Plan only — **never** an acceptance criterion or a
+  `Prierezové požiadavky` item: `teamwork-task-test` treats `framework` as
+  advisory, so such a box could never be ticked. The subsection heading is
+  `### Kvalita (UI/UX, výkon, bezpečnosť, dostupnosť, framework)` (en `### Quality
+  (UI/UX, performance, security, reachability, framework)`) — the same label
+  `teamwork-task-analyze` 1.3.0 uses.
+- **Shell portability contract** near the top of `SKILL.md`: the rules above in
+  eight bullets, so later edits do not reintroduce them.
+
+### Changed
+- **The board move lands in `Done - Local` on the new WAME board.** The shared
+  board (Teamwork workflow "WAME workflow", ~49 projects) ends work in *Done -
+  Local*, and it has no *Internal testing* column. The end-of-run option
+  "move In progress → Internal testing" read the plugin's own
+  `session_skill.board.done_stage` (`Internal testing`) with the fallback
+  `Testing`. On the new board neither column exists, so the move was skipped
+  with "no 'Internal testing' (or fallback) stage". Step 14 now uses the
+  **shared** `board_workflow.done_stage` + `done_stage_fallbacks` +
+  `match_mode`, the keys `teamwork-task` moves cards with. The defaults are
+  `Done - Local`, then `Internal testing`, then `Testing`, so an older
+  per-project board keeps landing where it did.
+  - The question, the preview and the `--board=move-done` help name the
+    configured chain instead of a hard-coded "Internal testing".
+  - `match_mode` is honoured: `case_sensitive` compares exactly. Both sides of
+    the case-insensitive compare go through jq's `ascii_downcase`, so the needle
+    and the table can no longer disagree.
+  - Verified read-only: project 736882 and project 589836 (both "WAME workflow"
+    59165) resolve to *Done - Local* 301170. Project 700336 (workflow 58171, no
+    *Done - Local* and no *Internal testing*) falls back to *Testing* 295928. An
+    empty project id still skips the move.
+- **Config migration for the shared keys, the same rule as `teamwork-task`
+  1.5.0.** Both plugins write one file, so neither may undo what the other did.
+  Step 2.5 adds `board_workflow` when it is missing. It moves `done_stage` to
+  `Done - Local` **only** when it still holds the old default `Internal
+  testing` and `board_workflow.done_stage_schema` is absent. `Internal testing`
+  then becomes the first fallback, followed by the existing fallbacks minus
+  `Done - Local`, deduplicated case-insensitively. A customised `done_stage`
+  is never touched. The marker is then set to `2`, so a later deliberate
+  `Internal testing` sticks.
+  - For the user's live config (`done_stage: "Internal testing"`,
+    `done_stage_fallbacks: ["Done - Local", "Testing"]`), the result is
+    `done_stage: "Done - Local"`, `done_stage_fallbacks: ["Internal testing",
+    "Testing"]`.
+  - The plugin's own copies `session_skill.board.in_progress_stage` /
+    `done_stage` / `done_stage_fallbacks` / `match_mode` are removed once while
+    they still hold the old defaults (marker `session_skill.board.stages_schema:
+    2`). A customised `session_skill.board.done_stage` stays, with its own
+    fallbacks, as an override for this plugin only.
+  - Verified on token-stripped scratch copies of the live shape, a fresh file,
+    a customised file and the old default, in zsh and bash: every run is
+    idempotent, and running `teamwork-task`, `teamwork-task-analyze` and this
+    plugin in any order leaves the same settings (only the key order differs).
+    A customised config keeps its values, a boolean `false` included.
+    `config.example.json` gains the shared `board_workflow` block and loses
+    the stage copies.
+
+Deliberately not changed: `hooks/record-session-start.sh` — `hooks.json` runs it
+explicitly with `bash` (shebang `#!/usr/bin/env bash`) and it is bash-3.2 clean, so
+zsh never executes it. The estimate-never-in-the-description rule, the preview +
+confirmation gate, the timelog cursor rules and the TIMEZONE CONTRACT are intact.
+
 ## [1.2.0] — 2026-09-22
 
 ### Changed

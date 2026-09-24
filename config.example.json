@@ -10,6 +10,17 @@
   "time_cursor_strategy": "last_teamwork_timelog",
   "include_commit_hash_in_log_description": true,
   "is_billable_by_default": true,
+  "board_workflow": {
+    "enabled": true,
+    "in_progress_stage": "In progress",
+    "done_stage": "Done - Local",
+    "done_stage_fallbacks": [
+      "Internal testing",
+      "Testing"
+    ],
+    "match_mode": "case_insensitive",
+    "done_stage_schema": 2
+  },
   "session_skill": {
     "write_back_mode": "ask_each",
     "description_format": "wame_canonical",
@@ -77,12 +88,7 @@
     },
     "board": {
       "after_create": "ask",
-      "in_progress_stage": "In progress",
-      "done_stage": "Internal testing",
-      "done_stage_fallbacks": [
-        "Testing"
-      ],
-      "match_mode": "case_insensitive"
+      "stages_schema": 2
     },
     "link_session": {
       "include_commits": true,

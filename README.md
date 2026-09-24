@@ -67,8 +67,9 @@ The skill then walks you through:
    time-log entry that will be written. Nothing is created until you approve.
 3. **Clarifying questions** (max 6 per run) when the session is ambiguous.
 4. **Board action** — after the task is created it asks what to do with the
-   board state: leave it, move `In progress → Internal testing`, or mark the
-   task complete (the work is already done, after all).
+   board state: leave it, move it to the done column (`Done - Local`, falling
+   back to `Internal testing`, then `Testing`), or mark the task complete (the
+   work is already done, after all).
 
 ### Optional flags
 
@@ -98,16 +99,35 @@ The skill then walks you through:
    shape (Laravel modular / Vue / Ionic / …), and the live conversation
    context.
 3. **Resolves the target** — project / tasklist / task URL, asking when none is
-   given. A task URL means "file this as a subtask of that task".
+   given. A task URL means "file this as a subtask of that task"; the parent's
+   project is read from `.task.tasklist.meta.projectId` (v3 task objects carry no
+   `projectId` key).
 4. **Drafts a main task** in the canonical WAME format:
    `[preamble] → HR → ## Akceptačné kritériá → HR → ## Cieľ → HR → ## Technický popis`,
    ending with a `### Zdroj` block that records branch + commits made in the
    session. The technical section is full Plan-Mode output (files, functions,
    schema changes, step-by-step, edge cases, tests) — same shape as
    `teamwork-task-analyze`.
+   Since 1.3.0 the acceptance criteria carry a `### Prierezové požiadavky`
+   sub-block with the applicable cross-cutting requirements — **reachability**
+   (menu entry + links from related screens for a new screen), **security**
+   (authorization of new actions), **performance** (lists / exports at real data
+   volume) and **ui_ux** — the same four dimensions `teamwork-task-test` checks
+   at QA time. Because the session describes work already done, an item is
+   stated as delivered only when the diff or the conversation proves it; the
+   applicable ones the session did not cover are listed as
+   *nepokryté v tejto session* and are never claimed. Every box stays `- [ ]`.
+   The technical section gains a short `### Kvalita` subsection with the *how* —
+   plus, when the session wrote code, a `Framework:` line recording the versions
+   installed in the repo (read from `composer.lock` / `package-lock.json` /
+   `package.json`, never from memory) and the version-specific idioms the diff
+   actually uses, each with its `path:line`. That fifth key, `framework`, is plan
+   only — never an acceptance criterion, because `teamwork-task-test` treats it as
+   advisory; what the diff could do better is noted as a suggestion for a later
+   refactor, never as open work.
 5. **Proposes subtasks** only when the estimate exceeds 240 min and the work
    has natural cut points (BE/FE/QA/Migration/DevOps role prefixes).
-6. **Estimates** via the WAME senior-engineer-with-Claude-Code methodology
+6. **Estimates** via the WAME estimate methodology `wame-estimate-v2`
    (one number per task against the anchors, 15 min step, split above 240 min, 480 min cap).
 7. **Asks clarifying questions** via `AskUserQuestion` (batches of 4, max 6 per
    run); folds answers into AC / Cieľ / Technický popis; preserves anything
@@ -123,8 +143,12 @@ The skill then walks you through:
     optional `(commit: <hash>)` suffix. The logged block is clamped so it never
     overlaps an existing timelog (it can pick up from your last log of the day
     instead).
-12. **Asks what to do with the board** — leave / move `In progress → Internal
-    testing` / mark complete.
+12. **Asks what to do with the board** — leave / move to the done column /
+    mark complete. The done column is the shared `board_workflow.done_stage`
+    that `teamwork-task` also uses — `Done - Local` on the WAME board, falling
+    back to `Internal testing`, then `Testing` on older boards. The move only
+    ever targets a workflow that lists the task's project; with no project id
+    it is skipped with a warning.
 13. **Renders a final report** — what was created, the time logged, the board
     action, the run duration, and any `[OTVORENÉ]` follow-ups.
 
@@ -143,6 +167,19 @@ The skill then walks you through:
 - Never sends anything to a customer or to Desk
 - Never moves the board or completes the task without asking (default
   `board.after_create = ask`)
+- Never claims a cross-cutting requirement (menu entry, authorization, …) that
+  the diff or the conversation does not prove, nor a framework version or idiom
+  the lock files and the diff do not show
+
+## Shell portability
+
+The skill's bash snippets run in your login shell — zsh on macOS, bash
+elsewhere. Since 1.3.0 `SKILL.md` carries a **Shell portability contract**
+(here-strings instead of `echo "$JSON" | jq`, no `${!…}` / `${…@Q}`, no bare
+globs, HTTP status checked on every Teamwork GET) so later edits do not
+reintroduce the zsh failures fixed in that release. The SessionStart hook is
+unaffected: `hooks.json` invokes it explicitly with `bash`, and it is bash-3.2
+clean.
 
 ## Config
 
@@ -154,6 +191,32 @@ namespace and reuses the family's time-logging keys (`time_rounding_minutes`,
 `config.example.json` for the full list — section labels, estimate methodology
 parameters, subtask split thresholds, role prefixes, clarifying-question cap,
 session-start detection order, time-log behaviour, and board defaults.
+
+### Board columns *(1.3.0)*
+
+The done column comes from the **shared** `board_workflow` block, the same one
+`teamwork-task` moves cards with:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `board_workflow.done_stage` | `Done - Local` | The end column of the WAME board (Teamwork workflow "WAME workflow"). |
+| `board_workflow.done_stage_fallbacks` | `["Internal testing", "Testing"]` | Tried in order when the project's board has no `done_stage` column, so an older board keeps landing where it did. |
+| `board_workflow.match_mode` | `case_insensitive` | How column names are compared. |
+
+When this plugin runs, it adds the block if it is missing and applies the same
+one-time rule as `teamwork-task` 1.5.0: a `done_stage` still at the old default
+`Internal testing` becomes `Done - Local`, and `Internal testing` becomes the
+first fallback. A customised `done_stage` is never touched. For example, the
+shape `"done_stage": "Internal testing", "done_stage_fallbacks": ["Done - Local",
+"Testing"]` ends as `"Done - Local"` + `["Internal testing", "Testing"]`.
+`board_workflow.done_stage_schema` records that the rule ran, so if you pick
+`Internal testing` again later, it stays.
+
+Up to 1.2.0 the plugin kept its own copies of these keys under
+`session_skill.board`. Copies that still hold the old defaults are removed once
+(marker `session_skill.board.stages_schema`). A customised
+`session_skill.board.done_stage` stays and overrides the shared column for this
+plugin only.
 
 The shared config survives plugin updates. Tokens are `chmod 600`.
 
