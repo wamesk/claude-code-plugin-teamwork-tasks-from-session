@@ -4,6 +4,16 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-10-12
+
+### Changed
+
+- **Skill description within the claude.ai limits.** The claude.ai marketplace
+  sync stores a skill's frontmatter `description` cut to 1024 characters and
+  with angle brackets removed, and warned about this skill. The description is
+  now a short trigger summary (under 1024 characters, no angle brackets); the
+  behaviour is unchanged and stays in the body of `SKILL.md`.
+
 ## [1.3.0] — 2026-09-24
 
 Source: reported in a colleague's "Štyri cesty k nule" analysis, which traced a
