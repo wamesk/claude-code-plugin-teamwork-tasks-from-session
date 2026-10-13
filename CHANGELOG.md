@@ -4,6 +4,26 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] — 2026-10-13
+
+Written on 2026-10-08 as 1.3.1 in a separate checkout and never published; 1.3.1
+was released from here with the description fix instead, so the estimate fix
+ships now as 1.3.2.
+
+### Fixed
+- **The estimate was counted twice when the primary task had subtasks.** Step
+  6.4 wrote the sum of the subtasks on the primary task *and* each subtask
+  carried its own number. Teamwork rolls subtask estimates up into the parent's
+  `accumulatedEstimatedMinutes` and adds the parent's own field on top, so the
+  work reported double (seen on teamwork-tasks-from-desk the same day: 480 →
+  960). The primary task's field now stays `0` whenever subtasks follow; the sum
+  is preview and report only. Step 12 reads the roll-up back and zeroes a parent
+  that still carries a number (classic v1 `estimated-minutes: 0`).
+- **Subtask loop guidance.** Step 12 now says how to drive the loop in zsh —
+  a record list through `while IFS=' ' read -r`, ids appended to a file — and
+  the shell contract names the `for SPEC in "1 180"; set -- $SPEC` trap, which
+  posts every subtask with an empty body (HTTP 400).
+
 ## [1.3.1] — 2026-10-12
 
 ### Changed

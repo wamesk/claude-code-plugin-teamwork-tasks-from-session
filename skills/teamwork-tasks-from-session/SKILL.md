@@ -41,6 +41,9 @@ silently somewhere in the Teamwork plugin family:
 - **JSON goes to `jq` on stdin via a here-string** — `jq … <<<"$JSON"` or
   `printf '%s\n' "$JSON" | jq …`. Never `echo "$JSON" | jq`: zsh's `echo` expands
   `\n`, `\t`, `\\` inside the JSON and jq rejects the whole response.
+- **Record lists are read the same way:** `printf '%s\n' "1 180" "2 120" | while IFS=' ' read -r N EST`.
+  Never `for SPEC in "1 180" …; do set -- $SPEC` — zsh does not split `$SPEC`, `$2`
+  is empty and every subtask POST goes out with an empty body (HTTP 400).
 - **Line lists are read with `while IFS= read -r X; do …; done <<<"$LIST"`.** An
   unquoted `for X in $LIST` iterates exactly once in zsh (no word splitting).
 - **No bash-only expansions:** `${!ARR[@]}`, `${!name}`, `${X@Q}`, `${X,,}` all
@@ -962,8 +965,13 @@ Use the **WAME methodology** (full text at the bottom of this document): one
 number per task, picked against the anchors there, rounded to
 `estimate.step_minutes` (15) and capped at `estimate.max_task_minutes` (480).
 There is no speedup factor and no buffer percentage — version 2 removed both.
-When there are subtasks, the main estimate is the **sum** of the subtask
-estimates.
+When there are subtasks, `PRIMARY_EST` is the **sum** of the subtask estimates —
+shown in the preview and the final report, but **written to the subtasks only**.
+The primary task's own estimate field stays `0`: Teamwork rolls subtask
+estimates up into the parent's `accumulatedEstimatedMinutes` and adds the
+parent's own field on top, so a parent carrying the sum reports the work twice
+(`estimateMinutes: 480` + four subtasks = `accumulatedEstimatedMinutes: 960`,
+observed 2026-10-08). Without subtasks the primary task carries its own number.
 
 The estimate is the *methodology* number — what this work should cost the next
 time somebody does it. The logged time is what it actually took this run. They
@@ -1194,6 +1202,9 @@ way; subtask mode just adds `parentTaskId`.
 
 ```bash
 EST_FIELD=$(jq -r '.session_skill.task_create_estimate_field // "estimatedMinutes"' "$CONFIG_FILE")
+# Estimate on the primary task ONLY when no subtasks follow (Step 6.4) — with
+# subtasks Teamwork rolls their estimates up and a parent estimate counts twice.
+if [ "${#SUBTASK_NAMES[@]}" -gt 0 ]; then PRIMARY_EST_FIELD_VALUE=0; else PRIMARY_EST_FIELD_VALUE=$PRIMARY_EST; fi
 
 NAME_PATH="$(mktemp)"; printf '%s' "$PRIMARY_NAME" > "$NAME_PATH"
 DESC_PATH="$(mktemp)"; printf '%s' "$PRIMARY_DESC" > "$DESC_PATH"
@@ -1207,8 +1218,9 @@ desc = open(sys.argv[2], encoding="utf-8").read()
 payload = {"task": {
     "name":           name,
     "description":    desc,
-    "${EST_FIELD}":   ${PRIMARY_EST},
 }}
+primary_est = ${PRIMARY_EST_FIELD_VALUE:-0}
+if primary_est: payload["task"]["${EST_FIELD}"] = primary_est
 aid = ${PRIMARY_ASSIGNEE_ID:-0}
 if aid: payload["task"]["assignees"] = {"userIds": [aid]}
 pid = ${PARENT_TASK_ID:-0}
@@ -1257,9 +1269,17 @@ load-bearing call; everything after it is best-effort and non-fatal.
 
 For each confirmed subtask from Step 6.3, in order. Same Python-encoded payload
 and `estimatedMinutes` field as Step 11, with `parentTaskId = PRIMARY_TASK_ID`
-and the per-role assignee resolved in Step 7.
+and the per-role assignee resolved in Step 7. **Every subtask carries its own
+estimate; the primary task's field stays 0** (Step 6.4). Drive the loop from a
+record list — `printf '%s\n' "1 180" "2 120" … | while IFS=' ' read -r N SUB_EST`
+with `SUB_NAME` / `SUB_DESC` read from per-subtask files written in Step 6.3 —
+never `for SPEC in …; do set -- $SPEC` (see the shell contract). A `while` fed by
+a pipe runs in a subshell in bash, so append each id to a file instead of
+`SUBTASK_IDS+=` and rebuild the array afterwards with
+`SUBTASK_IDS=( $(cat "$IDS_FILE") )`.
 
 ```bash
+IDS_FILE="${IDS_FILE:-$(mktemp)}"          # one subtask id per line, in Step 6.3 order
 SUB_ROLE=$(printf '%s' "$SUB_NAME" | sed -nE 's|^\[([A-Za-z]+)\].*|\1|p')
 SUB_ASSIGNEE_ID=$(jq -r --arg r "$SUB_ROLE" '.[$r] // ""' <<<"$ASSIGNEE_MAP")
 [ -z "$SUB_ASSIGNEE_ID" ] && SUB_ASSIGNEE_ID="${PRIMARY_ASSIGNEE_ID:-}"
@@ -1296,12 +1316,17 @@ except ValueError:
     sys.exit(0)          # not JSON -> empty id -> reported as a failure below
 t = d.get('task', d)
 print(t.get('id') or '')")
-if [ -n "$SUB_ID" ]; then SUBTASK_IDS+=("$SUB_ID"); echo "✅ Subtask: ${SUB_NAME} (#${SUB_ID})";
+if [ -n "$SUB_ID" ]; then printf '%s\n' "$SUB_ID" >> "$IDS_FILE"; echo "✅ Subtask: ${SUB_NAME} (#${SUB_ID}, ${SUB_EST} min)";
 else SUBTASK_FAILURES+=("${SUB_NAME}: $(printf '%s' "$SUB_RESP" | head -c 300)"); echo "❌ Subtask zlyhal: ${SUB_NAME}"; fi
 rm -f "$SUB_NAME_PATH" "$SUB_DESC_PATH" "$SUB_PAYLOAD_PATH"
 ```
 
 Per-subtask failure is non-fatal — log and continue.
+
+After the loop read the roll-up back: `GET /projects/api/v3/tasks/${PRIMARY_TASK_ID}.json`
+must show `estimateMinutes: 0` and `accumulatedEstimatedMinutes` equal to the sum
+of the subtasks. A parent that still carries its own number is double-counted —
+zero it with the classic v1 `PUT /tasks/{id}.json` `{"todo-item":{"estimated-minutes":0}}`.
 
 ---
 
