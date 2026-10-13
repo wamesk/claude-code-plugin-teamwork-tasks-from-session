@@ -127,7 +127,7 @@ The skill then walks you through:
    refactor, never as open work.
 5. **Proposes subtasks** only when the estimate exceeds 240 min and the work
    has natural cut points (BE/FE/QA/Migration/DevOps role prefixes).
-6. **Estimates** via the WAME estimate methodology `wame-estimate-v2`
+6. **Estimates** via the WAME estimate methodology `wame-estimate-v3`
    (one number per task against the anchors, 15 min step, split above 240 min, 480 min cap).
 7. **Asks clarifying questions** via `AskUserQuestion` (batches of 4, max 6 per
    run); folds answers into AC / Cieľ / Technický popis; preserves anything

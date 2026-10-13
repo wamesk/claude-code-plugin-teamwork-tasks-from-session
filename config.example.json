@@ -37,7 +37,7 @@
       "hr_marker": "---"
     },
     "estimate": {
-      "methodology": "wame_estimate_v2",
+      "methodology": "wame_estimate_v3",
       "set_if_missing": true,
       "step_minutes": 15,
       "max_task_minutes": 480

@@ -4,6 +4,26 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-10-13
+
+### Changed
+- **Estimate methodology `wame-estimate-v3`.** The shared `## WAME estimate
+  methodology` block now says Claude Code writes the code and the engineer
+  decides and reviews, and the number is the session time to a done, green
+  outcome. The anchors are halved (one screen end to end 120 → 60, new
+  `wamesk/*` module 300 → 150, bug with a stack trace 60 → 30) and three anchors
+  are new: a query or service method with its rare cases (45), a complex screen
+  that saves several records in one transaction (120), a reusable package with
+  replaced framework UI components (150). A *Calibration* paragraph records the
+  measured pairs that moved them: on 2026-10-13 a settings field with migration,
+  model rule and three test files was estimated 90 minutes and took 40, and a
+  53.5 h feature plan was rejected as padded and accepted at 27.75 h. The block
+  stays identical in all five plugins that carry it.
+- Config: `session_skill.estimate.methodology` defaults to `wame_estimate_v3`;
+  an existing `wame_estimate_v2` (or the older `wame_senior_claude_code`) is
+  moved to `wame_estimate_v3` on the next run. README and the plugin
+  description name v3.
+
 ## [1.3.2] — 2026-10-13
 
 Written on 2026-10-08 as 1.3.1 in a separate checkout and never published; 1.3.1
