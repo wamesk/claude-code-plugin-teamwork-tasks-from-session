@@ -16,6 +16,14 @@ actually took.
 /plugin install teamwork-tasks-from-session@wame
 ```
 
+Since 1.5.0 the plugin depends on **`work-rules`**, the tracker-independent
+WAME rules plugin: its `wame-time-logging` skill (rules `wame-time-logging-v1`)
+decides how the session time is logged, its `wame-estimate` skill (methodology
+`wame-estimate-v3`) how the task is estimated. It is declared in
+`dependencies` and installed with this plugin. If it is missing, the skill
+proposes no time log and stops before estimating — install it with
+`/plugin install work-rules@wame`.
+
 The **Projects** API token is shared with the rest of the Teamwork plugin
 family (`teamwork-task`, `teamwork-task-test`, `teamwork-task-analyze`,
 `teamwork-tasks-from-desk`, `teamwork-tasks-from-dnr`) — if any of those is
@@ -128,7 +136,9 @@ The skill then walks you through:
 5. **Proposes subtasks** only when the estimate exceeds 240 min and the work
    has natural cut points (BE/FE/QA/Migration/DevOps role prefixes).
 6. **Estimates** via the WAME estimate methodology `wame-estimate-v3`
-   (one number per task against the anchors, 15 min step, split above 240 min, 480 min cap).
+   (one number per task against the anchors, 15 min step, split above 240 min,
+   480 min cap). The methodology is not copied into this plugin: the skill loads
+   it from `work-rules:wame-estimate` before the first estimate.
 7. **Asks clarifying questions** via `AskUserQuestion` (batches of 4, max 6 per
    run); folds answers into AC / Cieľ / Technický popis; preserves anything
    unresolved as `[OTVORENÉ]` markers.
@@ -138,11 +148,19 @@ The skill then walks you through:
    REST API v3 — Python-encoded payload, `estimatedMinutes` write field,
    idempotency guard that searches by name before any retry.
 10. **Creates subtasks** with `parentTaskId` and per-role assignees.
-11. **Logs the real session time** back to Teamwork — one sequential,
-    non-overlapping, 5-minute-aligned entry written in a business tone with an
-    optional `(commit: <hash>)` suffix. The logged block is clamped so it never
-    overlaps an existing timelog (it can pick up from your last log of the day
-    instead).
+11. **Logs the real session time** back to Teamwork by the rules
+    `wame-time-logging-v1` (loaded from `work-rules:wame-time-logging`) — one
+    entry in whole 5-minute blocks on the 5-minute grid, written in a business
+    tone with an optional `(commit: <hash>)` suffix. The minutes are measured
+    from the session start, or from the end of your last entry of the day when
+    that is later, and rounded to the nearest block; any work of 1 minute or
+    more is at least 5 minutes, so there is never a 1–4 minute entry. The entry
+    never overlaps an existing one (re-read right before the write) and never
+    ends after the current 5-minute block. With 0 measured minutes, or a
+    timesheet that is already full, nothing is proposed and you may enter the
+    minutes by hand. Split across subtasks (optional), the blocks go by the
+    subtask estimates; a subtask that gets no block is named in the largest
+    entry.
 12. **Asks what to do with the board** — leave / move to the done column /
     mark complete. The done column is the shared `board_workflow.done_stage`
     that `teamwork-task` also uses — `Done - Local` on the WAME board, falling
@@ -158,6 +176,8 @@ The skill then walks you through:
   commits; this skill only reads them)
 - Never logs time without an explicit confirmation
 - Never writes a time log that overlaps an existing entry
+- Never proposes a time entry that is not whole 5-minute blocks — no 1–4 minute
+  entries (only minutes you type yourself are written as typed)
 - Never silently overwrites an estimate
 - Never writes the estimate into the task title or description — it goes to the
   Teamwork `estimatedMinutes` field only (the preview and the final report show
@@ -185,9 +205,12 @@ clean.
 
 Stored at `~/.claude/plugins/data/teamwork-task-wamesk/config.json` (shared with
 the rest of the Teamwork plugin family). This plugin adds a `session_skill.*`
-namespace and reuses the family's time-logging keys (`time_rounding_minutes`,
-`round_threshold_minutes`, `min_log_minutes`, `time_cursor_strategy`,
-`include_commit_hash_in_log_description`, `is_billable_by_default`). See
+namespace and reuses the family's time-logging keys (`time_rounding_minutes` —
+the block, 5 —, `time_cursor_strategy`,
+`include_commit_hash_in_log_description`, `is_billable_by_default`). Since 1.5.0
+it no longer adds `round_threshold_minutes` / `min_log_minutes`: the rules log
+whole blocks only and ignore both, and they are left untouched in an older
+shared file. See
 `config.example.json` for the full list — section labels, estimate methodology
 parameters, subtask split thresholds, role prefixes, clarifying-question cap,
 session-start detection order, time-log behaviour, and board defaults.

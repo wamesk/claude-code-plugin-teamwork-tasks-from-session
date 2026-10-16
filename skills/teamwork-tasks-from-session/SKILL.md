@@ -2,7 +2,7 @@
 name: teamwork-tasks-from-session
 description: "Use when the user solved something in a Claude Code session before any task existed and asks to 'vytvor task z tejto session', 'vytvor teamwork task zo session', 'zaloguj túto session ako task', 'sprav task z toho čo sme robili', 'z tejto session vytvor task a zaloguj čas', 'create a task from this session', 'log this session as a task', or invokes '/teamwork-tasks-from-session'. Reconstructs the session work (commits and diff since the session start, conversation) and drafts a Teamwork.com Projects task in the WAME format (Akceptačné kritériá, Cieľ, Technický popis) with optional subtasks and a wame-estimate-v3 estimate next to the real session time. Detects the session start from the bundled SessionStart hook and proposes one 5-minute-aligned time log that never overlaps an existing one. Asks where to file the work and whom to assign it to, previews and confirms every write, then asks what to do with the board. Never runs git, never logs time or overwrites an estimate without confirmation."
 argument-hint: "[<projects-or-tasklist-or-task-url>] [--assignee=<email>] [--no-subtasks] [--language=sk|en] [--write-back=ask|auto|never] [--start=<ISO|HH:MM|\"NNm ago\">] [--board=ask|leave|move-done|complete] [--log-time=true|false] [--max-questions=N]"
-allowed-tools: [Bash, Read, Write, Edit, Grep, Glob, AskUserQuestion]
+allowed-tools: [Bash, Read, Write, Edit, Grep, Glob, AskUserQuestion, Skill]
 ---
 
 # Teamwork Tasks From Session
@@ -180,9 +180,11 @@ jq '
   # that teamwork-task owns. Booleans are defaulted with null_or() instead.
   def null_or($d): if . == null then $d else . end;
   .default_language                                   //= "sk"
+# The block of the time-logging rules (`wame-time-logging-v1`). 1.5.0 no longer
+# adds `round_threshold_minutes` / `min_log_minutes`: the rules log whole blocks
+# only and ignore both. They are not deleted either — the file is shared, and
+# another plugin of the family may still read them until it is updated.
 | .time_rounding_minutes                              //= 5
-| .round_threshold_minutes                            //= 4
-| .min_log_minutes                                    //= 1
 | .time_cursor_strategy                               //= "last_teamwork_timelog"
 | .include_commit_hash_in_log_description             |= null_or(true)
 | .is_billable_by_default                             |= null_or(true)
@@ -388,7 +390,7 @@ earlier call fails with `command not found`, and the empty result would read as
 # wall-clock as LOCAL and the epoch is wrong by the local offset). The POST/PATCH
 # `time` field, however, is interpreted by Teamwork in the user's LOCAL/profile
 # timezone — so the absolute epoch is later formatted for the POST with LOCAL
-# `date -r` (Step 6.x), NEVER `date -ju`/`date -u`. Parse UTC, post local.
+# `date -r` (Step 9.1), NEVER `date -ju`/`date -u`. Parse UTC, post local.
 # A no-`Z` local input (e.g. a `--start 2026-06-10T08:30:00` value) does not match
 # the `Z` branch and falls through to GNU `date -d` / Python, which treat a naive
 # timestamp as local — so adding `-u` here only affects genuine UTC inputs.
@@ -458,7 +460,7 @@ and fall through.
 
 When there is no hook record (e.g. the plugin was installed mid-session, so the
 hook never fired for this session), propose picking up where the timesheet left
-off — exactly the cursor anchor `teamwork-task` uses:
+off — the cursor of the time-logging rules (section 1):
 
 ```bash
 # (parse_iso definition from above goes here — same Bash call.)
@@ -477,11 +479,12 @@ if [ -n "$USER_ID" ]; then
       LAST_TS=$(parse_iso "$LAST_LOGGED")
       if [ -n "$LAST_TS" ]; then
         CAND=$(( LAST_TS + LAST_MIN * 60 ))
-        if [ "$CAND" -le "$NOW_EPOCH" ]; then
-          LAST_LOG_END="$CAND"
-          if [ -z "$START_EPOCH" ]; then
-            START_EPOCH="$CAND"; START_SOURCE="end of today's last timelog"
-          fi
+        # The overlap anchor holds even when the entry ends after now (another
+        # session logged ahead of the clock) — rules section 1: the cursor still
+        # starts there. Only a past end can serve as the session start.
+        LAST_LOG_END="$CAND"
+        if [ "$CAND" -le "$NOW_EPOCH" ] && [ -z "$START_EPOCH" ]; then
+          START_EPOCH="$CAND"; START_SOURCE="end of today's last timelog"
         fi
       else
         echo "⚠ could not parse timeLogged '$LAST_LOGGED' from time.json — no last-timelog anchor" >&2
@@ -550,7 +553,7 @@ Then **AskUserQuestion**:
 - **Potvrdiť** — use this window
 - **Upraviť štart** — free-form (`HH:MM` / `"NNm ago"` / ISO), re-render
 - **Od posledného logu** — set start to `LAST_LOG_END` if known (shown only when
-  it differs from the current start)
+  it differs from the current start and is not after now)
 - **Nelogovať čas** — set `LOG_TIME_ENABLED=false`, keep building the task
   without a time log
 
@@ -961,11 +964,14 @@ Count 2–6. **Never force-split** small sessions.
 
 ### Step 6.4 — Estimate
 
-Use the **WAME methodology** (full text at the bottom of this document): one
-number per task, picked against the anchors there, rounded to
-`estimate.step_minutes` (15) and capped at `estimate.max_task_minutes` (480).
-There is no speedup factor and no buffer percentage — version 2 removed both.
-When there are subtasks, `PRIMARY_EST` is the **sum** of the subtask estimates —
+Use the **WAME methodology** `wame-estimate-v3`. It is not copied into this
+document: load it with the Skill tool (`work-rules:wame-estimate`) before the
+first estimate of the run, as the section *WAME estimate methodology* at the
+bottom says, and apply it as written — one number per task, picked against the
+anchors of that skill. This plugin adds only its own use of the number: round to
+`estimate.step_minutes` (15), cap at `estimate.max_task_minutes` (480). When the
+skill is not available, stop here and tell the user to run
+`/plugin install work-rules@wame`. When there are subtasks, `PRIMARY_EST` is the **sum** of the subtask estimates —
 shown in the preview and the final report, but **written to the subtasks only**.
 The primary task's own estimate field stays `0`: Teamwork rolls subtask
 estimates up into the parent's `accumulatedEstimatedMinutes` and adds the
@@ -982,7 +988,8 @@ in the family that puts an estimate and a measured duration next to each other o
 the same piece of work. Say so in the preview when they differ by more than half:
 one line naming the anchor you used and the real number. When the same kind of
 work drifts the same way several runs in a row, the fix is to move that anchor in
-the methodology block — never to re-introduce a buffer percentage.
+the `wame-estimate` skill of the `work-rules` plugin (never in this plugin) —
+never to re-introduce a buffer percentage.
 
 ---
 
@@ -1057,63 +1064,157 @@ Step 9 when you have no genuine ambiguity.
 Only when `LOG_TIME_ENABLED != false` (the `--log-time` flag and the Step 3.5
 "Nelogovať čas" option both set it false) and `time_log.enabled == true`.
 
+### Step 9.0 — Load the time-logging rules
+
+The rules are not copied into this plugin. They are version
+`wame-time-logging-v1`, the `wame-time-logging` skill of the `work-rules`
+plugin — the one source for every WAME plugin that writes time, whatever the
+tracker. Load it with the Skill tool (`work-rules:wame-time-logging`) before
+computing anything below. This step implements its section 6 (one entry for a
+whole session) and, for `split_subtasks`, its section 5 split; it adds only what
+is Teamwork-specific (the `time.json` read, the UTC read / local write time
+zones, the POST).
+
+`work-rules` is declared in `dependencies`, so it is installed with this plugin.
+If the skill is still not in the available-skills list, **propose no time log**:
+set `LOG_TIME_ENABLED=false`, keep building the task, and say in the Step 10
+preview and the Step 15 report: *„Čas nenavrhujem — chýbajú pravidlá logovania.
+Spusti `/plugin install work-rules@wame`."* Never log from memory or from an
+older copy of the rules.
+
+### Step 9.1 — Measured minutes, entry minutes, cursor, room
+
+Rules section 6, in the terms of the rules (block = `time_rounding_minutes`, 5):
+
+- **Measured minutes** — from the confirmed session start (Step 3.5), or from
+  the end of today's last own entry (`LAST_LOG_END`, Step 3.2) when that is
+  later, to the window end (`NOW_EPOCH`); rounded **up** to whole minutes.
+- **Minutes** — whole blocks only. 0 measured → nothing to log. Any work of
+  1 minute or more → at least one block (1–4 → 5). From one block up → the
+  nearest block, half up: `5 → 5, 7 → 5, 8 → 10, 12 → 10, 13 → 15`.
+- **Cursor** (the start of the entry) — on the grid: the session start moved
+  **down** to its block, but never before the end of today's last own entry
+  moved **up** to the grid.
+- **Room** — whole blocks from the cursor to the **limit** `ceil(now, block)`.
+  Room ≥ minutes → log the minutes; 0 < room < minutes → log the room and report
+  the cut; room 0 → nothing fits now (another session logged up to or past the
+  current block), so nothing is written and the report says why.
+
 ```bash
-ROUND=$(jq -r '.time_rounding_minutes // 5' "$CONFIG_FILE"); ROUND_SECS=$((ROUND*60))
-THRESHOLD=$(jq -r '.round_threshold_minutes // 4' "$CONFIG_FILE")
-MIN_LOG=$(jq -r '.min_log_minutes // 1' "$CONFIG_FILE")
+# Fresh shell: carry SESSION_START_EPOCH (Step 3.5), NOW_EPOCH (Step 3 — the
+# window end) and LAST_LOG_END (Step 3.2, may be empty) over as literal values.
+ROUND=$(jq -r '.time_rounding_minutes // 5' "$CONFIG_FILE")
+case "$ROUND" in ''|*[!0-9]*|0) ROUND=5 ;; esac
+BLOCK=$(( ROUND * 60 ))
 AVOID_OVERLAP=$(jq -r '.session_skill.time_log.avoid_overlap | if . == null then true else . end' "$CONFIG_FILE")
+hm() { date -r "$1" +%H:%M 2>/dev/null || date -d "@$1" +%H:%M; }
 
-PROPOSED_START=$SESSION_START_EPOCH
-OVERLAP_NOTE=""
+TIMELOG_STATE="ok"          # ok | cut | nothing_measured | no_room
+OVERLAP_NOTE=""; CUT_NOTE=""
 
-# Clamp so the new entry never overlaps today's last timelog. LAST_LOG_END was
-# captured in Step 3.2 (recompute here if it was not, using the same query).
-if [ "$AVOID_OVERLAP" = "true" ] && [ -n "${LAST_LOG_END:-}" ] && [ "$PROPOSED_START" -lt "$LAST_LOG_END" ]; then
-  OVERLAP_NOTE="štart pred koncom posledného logu — orezané na $(date -r "$LAST_LOG_END" +%H:%M 2>/dev/null || date -d "@$LAST_LOG_END" +%H:%M), aby sa logy neprekrývali"
-  PROPOSED_START=$LAST_LOG_END
+# Measured minutes: from the later of the session start and the end of today's
+# last own entry, to the window end — rounded UP to whole minutes.
+FROM=$SESSION_START_EPOCH
+if [ "$AVOID_OVERLAP" = "true" ] && [ -n "${LAST_LOG_END:-}" ] && [ "$LAST_LOG_END" -gt "$FROM" ]; then
+  FROM=$LAST_LOG_END
+  OVERLAP_NOTE="session začala pred koncom posledného záznamu ($(hm "$LAST_LOG_END")) — meria sa až od neho, aby sa záznamy neprekrývali"
+fi
+SECS=$(( NOW_EPOCH - FROM )); [ "$SECS" -lt 0 ] && SECS=0
+MEASURED_MIN=$(( (SECS + 59) / 60 ))
+
+# Minutes — whole blocks only, never a 1–4 minute entry.
+if   [ "$MEASURED_MIN" -eq 0 ];        then DURATION_MIN=0
+elif [ "$MEASURED_MIN" -lt "$ROUND" ]; then DURATION_MIN=$ROUND
+else DURATION_MIN=$(( ( (MEASURED_MIN + ROUND / 2) / ROUND ) * ROUND ))
 fi
 
-DURATION_SECS=$(( NOW_EPOCH - PROPOSED_START ))
-RAW_MIN=$(( DURATION_SECS / 60 ))
-[ "$RAW_MIN" -lt 0 ] && RAW_MIN=0
+# Cursor on the grid. Every UTC offset is a multiple of 15 min, so an epoch that
+# is a multiple of 5 min is on the local 5-minute grid too.
+CURSOR=$(( SESSION_START_EPOCH / BLOCK * BLOCK ))
+if [ "$AVOID_OVERLAP" = "true" ] && [ -n "${LAST_LOG_END:-}" ]; then
+  LAST_UP=$(( (LAST_LOG_END + BLOCK - 1) / BLOCK * BLOCK ))
+  [ "$LAST_UP" -gt "$CURSOR" ] && CURSOR=$LAST_UP
+fi
 
-# Rounding — identical two-zone logic to teamwork-task Step 6.6:
-#   RAW >= THRESHOLD → round to NEAREST multiple of ROUND (half-up)
-#   RAW <  THRESHOLD → keep raw minutes (sub-round), provided RAW >= MIN_LOG
-TIMELOG_SUB_ROUND=0
-if [ "$RAW_MIN" -ge "$THRESHOLD" ]; then
-  DURATION_MIN=$(( ( (RAW_MIN + ROUND/2) / ROUND ) * ROUND ))
-  [ "$DURATION_MIN" -lt "$ROUND" ] && DURATION_MIN=$ROUND
-  [ $(( DURATION_MIN % ROUND )) -ne 0 ] && TIMELOG_SUB_ROUND=1
-else
-  DURATION_MIN=$RAW_MIN
-  TIMELOG_SUB_ROUND=1
+# Room against the limit — the end of the block that holds now.
+LIMIT=$(( (NOW_EPOCH + BLOCK - 1) / BLOCK * BLOCK ))
+ROOM=0; [ "$LIMIT" -gt "$CURSOR" ] && ROOM=$(( (LIMIT - CURSOR) / BLOCK * ROUND ))
+
+if [ "$DURATION_MIN" -eq 0 ] && [ -n "${LAST_LOG_END:-}" ] && [ "$LAST_LOG_END" -gt "$NOW_EPOCH" ]; then
+  TIMELOG_STATE="no_room"; CUT_NOTE="výkaz je plný do $(hm "$CURSOR") — iný záznam končí až po teraz"
+elif [ "$DURATION_MIN" -eq 0 ]; then
+  TIMELOG_STATE="nothing_measured"
+elif [ "$ROOM" -eq 0 ]; then
+  TIMELOG_STATE="no_room"; CUT_NOTE="výkaz je plný do $(hm "$CURSOR")"; DURATION_MIN=0
+elif [ "$ROOM" -lt "$DURATION_MIN" ]; then
+  TIMELOG_STATE="cut"; CUT_NOTE="${DURATION_MIN} → ${ROOM} min — kurzor dosiahol aktuálny blok"; DURATION_MIN=$ROOM
 fi
 
 # LOCAL formatting on purpose: Teamwork interprets the POST `time` field in the
 # user's local/profile timezone (inverse of `timeLogged`, which is UTC). Never
 # switch to `date -ju`/`date -u` here — see the TIMEZONE CONTRACT note on parse_iso.
-LOG_DATE=$(date -r "$PROPOSED_START" +%Y-%m-%d 2>/dev/null || date -d "@$PROPOSED_START" +%Y-%m-%d)
-LOG_TIME=$(date -r "$PROPOSED_START" +%H:%M:%S 2>/dev/null || date -d "@$PROPOSED_START" +%H:%M:%S)
+LOG_DATE=$(date -r "$CURSOR" +%Y-%m-%d 2>/dev/null || date -d "@$CURSOR" +%Y-%m-%d)
+LOG_TIME=$(date -r "$CURSOR" +%H:%M:%S 2>/dev/null || date -d "@$CURSOR" +%H:%M:%S)
+LOG_END_HM=$(hm "$(( CURSOR + DURATION_MIN * 60 ))")
 ```
+
+Worked through (block 5): start 10:01, now 10:09, no entry today → measured 8 →
+10 min, cursor 10:00, limit 10:10 → **10:00–10:10**. Last entry ended 10:02,
+now 10:09 → measured 7 → 5 min, cursor 10:05 → **10:05–10:10**. Last entry ended
+10:01, now 10:09 → measured 8 → 10 min, cursor 10:05, room 5 → **10:05–10:10**,
+cut `10 → 5`. Another session logged until 10:13, now 10:12 → room 0 → nothing
+written, `výkaz je plný do 10:15`.
 
 Edge cases:
 
-- `DURATION_MIN < MIN_LOG` (essentially zero — the session start equals now, or
-  was fully clamped away) → **do not** invent time. Surface it in the preview as
-  *"čas na zalogovanie ~0 min"* and offer, via the Step 10 gate, to either skip
-  the log or enter a manual minute count.
-- `RAW_MIN` over `max_session_hours_warn * 60` → show the long-session warning;
-  the log still happens after confirmation.
+- `nothing_measured` (the session start equals now) → **do not** invent time.
+  The preview says *„nič na zalogovanie — 0 min namerané"* and the Step 10 gate
+  offers a manual entry or no log.
+- `no_room` → nothing is written; the preview and the report carry `CUT_NOTE`.
+  The Step 10 gate offers the same manual entry.
+- `MEASURED_MIN` over `max_session_hours_warn * 60` → show the long-session
+  warning; the log still happens after confirmation.
 
-Decide the **log target** (`time_log.log_target`, default `primary_task`):
+### Step 9.2 — Log target
 
-- `primary_task` — the whole duration on the primary created task (the main task,
-  or the subtask in subtask mode). One entry. This is the default.
-- `split_subtasks` — split `DURATION_MIN` across created subtasks proportional to
-  their estimates (each share re-rounded to `ROUND`, remainder to the largest).
-  Only offered when subtasks exist; mention it as an edit option, do not default
-  to it.
+`time_log.log_target`, default `primary_task`:
+
+- `primary_task` — one entry of `DURATION_MIN` on the primary created task (the
+  main task, or the subtask in subtask mode). This is the default.
+- `split_subtasks` — only offered when subtasks exist; mention it as an edit
+  option in Step 10, never default to it. Rules section 5 split: the entry's
+  blocks (`DURATION_MIN / ROUND`) go to the created subtasks **in proportion to
+  their estimates** by largest remainder — every subtask gets the whole part of
+  its share, the blocks left over go one each to the largest remainders (tie:
+  the larger estimate, then the earlier subtask). The entries follow each other
+  from `CURSOR` in subtask order. A subtask that gets **0 blocks** has no entry
+  of its own: it is named in the entry with the most blocks (tie: the earlier
+  subtask), in the shared-entry format of rules section 4 — the owner first, the
+  rest in subtask order:
+
+  ```
+  Spoločný záznam za 2 úlohy (spolu 15 min práce):
+  #<id> <subtask> — <čo sa spravilo>
+  #<id> <subtask> — <čo sa spravilo>
+  ```
+
+```bash
+# SUB_ESTS = the subtask estimates in Step 6.3 order as ONE string ("60 30 15");
+# Python splits it, because zsh does not word-split an unquoted variable.
+BLOCKS=$(( DURATION_MIN / ROUND ))
+SPLIT=$(python3 - "$BLOCKS" "$SUB_ESTS" <<'PY'
+import sys
+blocks = int(sys.argv[1]); est = [int(x) for x in sys.argv[2].split()]
+total = sum(est) or 1
+got = [blocks * e // total for e in est]    # whole part of each share
+rem = [blocks * e % total for e in est]     # remainders over the same denominator
+for i in sorted(range(len(est)), key=lambda i: (-rem[i], -est[i], i))[:blocks - sum(got)]:
+    got[i] += 1
+print(" ".join(map(str, got)))
+PY
+)
+# Rules example: 13 blocks, estimates "60 30 15" → "7 4 2".
+```
 
 ---
 
@@ -1146,13 +1247,19 @@ is created before the user approves.
 - Zostáva: <n> — <dimension keys, or "nič">  (not in the logged time; follow-up subtask?)
 
 ### ⏱ Čas na zalogovanie
-- Štart:   <LOG_TIME> (<START_SOURCE>)
-- Koniec:  <now HH:MM>
-- Trvanie: **<DURATION_MIN> min**  (raw <RAW_MIN> min)
+- Záznam:   <LOG_TIME as HH:MM>–<LOG_END_HM> (<LOG_DATE>) · **<DURATION_MIN> min** (celé 5-min bloky)
+- Namerané: <MEASURED_MIN> min, <FROM as HH:MM> (<START_SOURCE>) → <now HH:MM>
 - <OVERLAP_NOTE, if any>
+- <CUT_NOTE, if any — e.g. "10 → 5 min — kurzor dosiahol aktuálny blok">
 - Loguje sa na: <primary task title>
+  <split_subtasks instead: one row per subtask — subtask · odhad · bloky · od–do;
+   a subtask with 0 blocks shows "v zázname #<owner>">
 - Billable: <yes/no>
 - <"⚠ dlhá session — over čas" when over the warn threshold>
+<TIMELOG_STATE nothing_measured / no_room — instead of the lines above:>
+- ⏭ Nič na zalogovanie — <"0 min namerané" | CUT_NOTE>. Čas môžeš zadať ručne alebo nelogovať.
+<rules skill missing (Step 9.0) — instead of all of the above:>
+- ⏭ Čas nenavrhujem — chýbajú pravidlá logovania. Spusti `/plugin install work-rules@wame`.
 
 ### Po vytvorení (board)
 - <"Spýtam sa" when board.after_create == ask, else the configured action;
@@ -1165,7 +1272,13 @@ Then **AskUserQuestion**:
 - **Vytvoriť** — proceed to Step 11
 - **Upraviť task** — free-form corrections, re-render
 - **Upraviť subtask N** — same, per subtask
-- **Upraviť čas** — re-open the Step 9 numbers (change start / minutes / skip log)
+- **Upraviť čas** — re-open the Step 9 numbers (change start / minutes / skip
+  log). A new start runs Step 9.1 again, so the entry stays whole blocks. When
+  Step 9 found nothing to log (`nothing_measured` / `no_room`) this option is
+  labelled **Zadať čas ručne**. Minutes the user types are written as typed —
+  a typed number is final (rules section 7); when it is not whole blocks, the
+  Step 15 report says so in one line. The entry still starts at `CURSOR`, never
+  earlier, so a manual entry cannot overlap either.
 - **Bez subtaskov** — drop the split, keep only the primary task
 - **Zrušiť** — stop without any write
 
@@ -1332,11 +1445,21 @@ zero it with the classic v1 `PUT /tasks/{id}.json` `{"todo-item":{"estimated-min
 
 ## Step 13 — Log the session time
 
-Skip entirely when `LOG_TIME_ENABLED == false` or `DURATION_MIN < MIN_LOG`
-(record `⏭ nelogované` in the report). Otherwise post **one** entry to the
-**primary task** (or split across subtasks when `log_target == split_subtasks`):
+Skip entirely when `LOG_TIME_ENABLED == false` or `DURATION_MIN == 0` (record
+`⏭ nelogované` and the reason in the report — no rules, 0 min measured, or
+`CUT_NOTE`). Otherwise post **one** entry to the **primary task** (or split
+across subtasks when `log_target == split_subtasks`):
 
 `POST ${BASE}/projects/api/v3/tasks/${PRIMARY_TASK_ID}/time.json`
+
+**Re-read before the write** (rules hard rule 3 — another session can log while
+this one waits at the Step 10 gate): ask for today's last own entry again, with
+the Step 3.2 query (`assignedToUserIds`, never `userId`). When its end is now
+after `CURSOR`, set `LAST_LOG_END` to it and run Step 9.1 again; if the entry
+changes, show the new start, minutes and `CUT_NOTE` in one **AskUserQuestion**
+before writing (`--write-back=auto`: write the recomputed entry and name the
+change in the report). A failed re-read is a `⚠` line, and the confirmed entry
+is written as previewed.
 
 **Business-tone description** (same rule as `teamwork-task` Step 6.8): write what
 was delivered for the user/business, 1–2 sentences in `default_language`,
@@ -1362,7 +1485,10 @@ PAYLOAD=$(jq -nc \
   --argjson billable "$BILLABLE" \
   '{timelog: {hours: 0, minutes: $minutes, description: $desc, date: $date, time: $time, isbillable: $billable}}')
 
-HTTP=$(curl -sS -o /tmp/tws_time.json -w "%{http_code}" -u "$AUTH" \
+# A per-run temp file, never a fixed /tmp path — two sessions can run this
+# skill at once (rules section 10).
+TIME_RESP=$(mktemp)
+HTTP=$(curl -sS -o "$TIME_RESP" -w "%{http_code}" -u "$AUTH" \
   -H "Content-Type: application/json" -H "Accept: application/json" \
   -X POST -d "$PAYLOAD" \
   "${BASE}/projects/api/v3/tasks/${PRIMARY_TASK_ID}/time.json")
@@ -1370,17 +1496,25 @@ HTTP=$(curl -sS -o /tmp/tws_time.json -w "%{http_code}" -u "$AUTH" \
 if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
   TIMELOG_OK=1; echo "✅ Zalogované ${DURATION_MIN} min od ${LOG_TIME} na #${PRIMARY_TASK_ID}"
 else
-  TIMELOG_OK=0; echo "⚠ time log POST failed (HTTP $HTTP)"; head -c 500 /tmp/tws_time.json
+  TIMELOG_OK=0; echo "⚠ time log POST failed (HTTP $HTTP)"; head -c 500 "$TIME_RESP"
 fi
+rm -f "$TIME_RESP"
 ```
 
-The entry's start = `LOG_TIME`, duration = `DURATION_MIN` — both derived from the
-overlap-clamped `PROPOSED_START`, so the result is contiguous with the rest of
-today's timesheet (no gaps, no overlaps). On non-2xx, report and continue — the
-task already exists; do not blindly retry.
+The entry's start = `LOG_TIME` (the `CURSOR`, on the grid) and its minutes =
+`DURATION_MIN` (whole blocks) — both from Step 9.1, so the entry picks up where
+today's timesheet left off or in the block where the session began, never
+overlaps an earlier entry and never ends after the current block. On non-2xx,
+report and continue — the task already exists; do not blindly retry.
 
-For `split_subtasks`, loop the per-subtask shares, advancing a local cursor by
-each logged share so the sub-entries are themselves non-overlapping.
+For `split_subtasks`, post one entry per subtask that got blocks in Step 9.2, in
+subtask order: start = `CURSOR` plus the blocks already posted, minutes =
+`blocks × ROUND`; the entry with the most blocks carries the shared-entry
+description that names the 0-block subtasks. Drive the loop from a record list
+(`printf '%s\n' "<id> <blocks>" … | while IFS=' ' read -r SUB_ID SUB_BLOCKS`, see
+the shell contract). After a failed POST the cursor does not move (rules
+section 1): report the failure, do not retry blindly; the next entry starts at
+the same cursor.
 
 ---
 
@@ -1557,9 +1691,15 @@ fi
 **Cieľ:** <PROJECT_NAME> › <TASKLIST_NAME>  <(+ "subtask of #<PARENT_TASK_ID>")>
 **Odhad:** <EST> min · **Priradené:** <name / nepriradené>
 
-### ⏱ Zalogovaný čas
-- <DURATION_MIN> min od <LOG_TIME> (<LOG_DATE>) — <START_SOURCE>
-- <OVERLAP_NOTE, if any> · billable: <yes/no> · ✅ zalogované / ⏭ nelogované / ⚠ zlyhalo
+### ⏱ Zalogovaný čas (pravidlá `wame-time-logging-v1`)
+- Kurzor: <LOG_TIME as HH:MM> — <why: "začiatok session 10:03 → blok 10:00" |
+  "posledný záznam dnes skončil 10:03 → 10:05">
+- <LOG_TIME as HH:MM>–<LOG_END_HM> (<LOG_DATE>) · <DURATION_MIN> min · <primary task>
+  <split_subtasks: one row per entry — od–do · min · subtask · other subtasks named in it>
+- Namerané: <MEASURED_MIN> min od <FROM as HH:MM> (<START_SOURCE>)
+- <OVERLAP_NOTE, if any> · <CUT_NOTE, if any> · billable: <yes/no>
+- ✅ zalogované / ⏭ nelogované — <reason: chýbajú pravidlá (`/plugin install work-rules@wame`) | 0 min namerané | CUT_NOTE | vypnuté> / ⚠ zlyhalo
+- <a typed number that is not whole blocks: "ručne zadané <N> min — nie sú to celé 5-min bloky">
 
 ### Subtasky
 - ✅ [BE] <name> (#<id>) — <est> min — <assignee>
@@ -1583,8 +1723,15 @@ fi
   *reads* the commits the session already produced
 - Never logs time without an explicit Step 10 confirmation
 - Never writes a time log that overlaps an existing entry (the overlap clamp in
-  Step 9 is unconditional when `avoid_overlap == true`)
-- Never invents time when the computed duration is ~0 — it asks instead
+  Step 9 is unconditional when `avoid_overlap == true`, and Step 13 re-reads the
+  last own entry right before the POST)
+- Never proposes an entry that is not whole 5-minute blocks — no 1–4 minute
+  entry, no 7 or 13 (`wame-time-logging-v1`); only minutes the user types
+  are written as typed
+- Never proposes a time log without the `work-rules:wame-time-logging` skill,
+  and never estimates without `work-rules:wame-estimate` — no rules from memory
+- Never invents time when 0 minutes were measured — it offers a manual entry
+  instead
 - Never silently overwrites an estimate (the estimate is on a *new* task; there
   is nothing to overwrite, and the methodology number is always shown)
 - Never writes the estimate into the task **title** or **description** — the
@@ -1625,7 +1772,10 @@ fi
 | `me.json` other error | Warn; "assign to me" + last-timelog fallback degrade — keep going |
 | No SessionStart hook record | Fall back to last timelog → transcript → ask |
 | Start detected in the future | Discard, fall through to the next detector |
-| Computed duration ~0 | Offer skip-log or manual minutes in Step 10 (never invent) |
+| 0 measured minutes | Nothing proposed; Step 10 offers a manual entry or no log (never invent) |
+| Timesheet full — room 0 (another entry ends in or after the current block) | Nothing written; `výkaz je plný do HH:MM` in the preview and the report |
+| `work-rules:wame-time-logging` not available | No time-log proposal; the task is still created; tell the user `/plugin install work-rules@wame` |
+| `work-rules:wame-estimate` not available | Stop before the first estimate; tell the user `/plugin install work-rules@wame` |
 | Long session (> warn threshold) | Show a warning; still log after confirmation |
 | Project/tasklist/task 403/404 | Stop with the failing URL printed (a completed tasklist answers 404 too) |
 | Parent task has no project id in `.task.tasklist.meta` / `included.tasklists` | `⚠` warning; Step 14.1 board move is skipped, never guessed |
@@ -1742,98 +1892,14 @@ need one removed, that is a question for the user, not a step in the plan.
 
 ## WAME estimate methodology
 
-> Block version `wame-estimate-v3`. Shared **verbatim** across the plugins
-> `teamwork-task-analyze`, `teamwork-tasks-from-dnr`, `teamwork-tasks-from-desk`,
-> `teamwork-tasks-from-session` and `dnr-business`. Change it in all five or in
-> none — a per-plugin variant is how two skills start quoting different numbers
-> for the same task.
-
-**Estimate one number, directly.** Do not produce a "traditional" estimate and
-then multiply it by a speedup and a buffer. Two percentages stacked on a guess
-open a band almost twice as wide as the guess itself, and in a negotiation the
-widest end of that band always wins. Name the minutes the work takes and defend
-that number.
-
-**Who does the work.** Claude Code writes the code. It reads the codebase,
-implements, writes and runs the tests, builds the assets and fixes what the
-review finds. An engineer who knows the project decides, answers questions and
-reviews the diff. The number is the **session time** until the outcome is done
-and green: Claude working plus the engineer reading, deciding and reviewing. It
-is not the time a person would need to type the same code. There is no separate
-QA pass and no handover to a second person.
-
-**What the number covers**
-
-- Reading the relevant code and reproducing the reported behaviour
-- The implementation itself
-- Writing or extending the test, and running the affected tests
-- Self-review and the fixes it produces
-- One round of review feedback
-
-**What the number never covers** — estimate each of these as its own task instead
-of folding it in
-
-- Deployment, running the migration on production, fixing production data
-- Talking to the client or the PO, and waiting for the answer
-- Any work that sits behind an unanswered `[OTVORENÉ]` question
-- Anything the task itself declares out of scope
-
-**Shape of the number**
-
-- A multiple of 15 minutes. Never below 15.
-- Above 240 minutes: propose a split into 2–6 atomic subtasks. That threshold is
-  `propose_split_threshold_minutes` and it is the real ceiling in daily use.
-- 480 minutes is a hard cap. Work that will not fit under it is not a task yet.
-
-**Anchors.** These are finished outcomes, not categories of feeling. Pick the
-closest line and move by at most one 15-minute step. If the number you want is
-more than one step away from every anchor, write down in the reasoning what makes
-this case different — that sentence is what a reviewer checks.
-
-| Finished work | Minutes |
-|---|---|
-| Text, label, translation key or config value, plus the test that guards it | 15 |
-| One field, filter or validation rule on one screen, plus a test | 15 |
-| Bug with a stack trace or a one-line repro: fix plus regression test | 30 |
-| Query or service method with its rare cases (date ranges, open ends, `NULL`), plus tests | 45 |
-| Vue/React component wired to an API that already exists, plus a test | 45 |
-| One CRUD endpoint or one screen end to end, plus tests | 60 |
-| Bug that reproduces but spans 2–3 layers: fix plus tests | 60 |
-| Bug with no repro yet: investigate, then fix | 90 |
-| Schema migration with a data backfill and a copy-back assertion | 90 |
-| Complex screen that saves several records in one transaction, plus tests | 120 |
-| New module in `wamesk/*` (model, migration, Nova screen, policy, tests) | 150 |
-| Reusable package: PHP API, replaced framework UI components, build, e2e test | 150 |
-
-**Calibration.** The anchors come from measured sessions, not from feel. On
-2026-10-13 a company setting — migration with a check constraint, model method,
-admin field and three test files — was estimated 90 minutes under v2 and took
-40. The same day a 27-task feature plan estimated at 53.5 h under v2 was rejected
-as padded; the accepted plan was 27.75 h. Add a measured pair here when an anchor
-moves.
-
-**Uncertainty is an open question, not a surcharge.** When you cannot size the
-work, you have found something the task does not say yet. Write that question
-into the task, estimate the investigation that answers it, and state in the
-reasoning what the fix costs under each likely answer. A number with a written
-assumption survives review. A number padded for "unknown unknowns" does not, and
-it hides the question that was worth asking.
-
-**Do not pad a task because it is labelled TBD**, and do not shrink a real
-multi-layer bug so the list looks cheap. Both errors cost the same trust.
-
-**Why this replaced the old rule.** Hand-written estimates used to run about
-twice the real cost, which lost us work we should have won. The first fix was a
-30–50 % speedup factor with a 15–30 % buffer on top — but that chain put the
-padding straight back while sounding rigorous, and it produced a 0.58×–0.91×
-band on every single task. The anchors above carry the same judgement as one
-number. Version 2 still pictured an engineer who types the code with an
-assistant, and its anchors ran about twice the measured session time once Claude
-Code wrote the code itself (see *Calibration*). Version 3 halves the anchors and
-says who types. The measured feedback loop is the `teamwork-tasks-from-session` plugin,
-which shows the methodology estimate and the real logged session time side by
-side. When those two drift apart on the same kind of work, change the anchors
-here — never re-introduce a buffer percentage.
+The methodology — version `wame-estimate-v3` — lives in the `wame-estimate`
+skill of the `work-rules` plugin, the one source for every WAME plugin and every
+tracker. Before the first estimate of the run, load it with the Skill tool
+(`work-rules:wame-estimate`) and apply it as written. This plugin declares
+`work-rules` in `dependencies`, so it is installed with it. If the skill is still
+not in the available-skills list, stop before estimating and tell the user to run
+`/plugin install work-rules@wame` — never estimate from memory or from an older
+copy of the methodology.
 
 ---
 

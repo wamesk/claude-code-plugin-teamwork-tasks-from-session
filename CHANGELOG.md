@@ -4,6 +4,60 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-10-16
+
+Why: time entries of 2–3 minutes showed up on the timesheet. The plugin family
+logged work below 4 minutes as raw minutes (`round_threshold_minutes`,
+`min_log_minutes`), and the user wants whole 5-minute blocks only. The rules
+also moved out of this plugin into `work-rules`, a plugin that does not depend
+on any tracker, because WAME is leaving Teamwork — the time-logging and
+estimate rules must survive the move to Jira, Zoho or the WAME in-house tool,
+and stay one source instead of a copy in every plugin.
+
+### Added
+- **Dependency on `work-rules`** (`dependencies` in `plugin.json`). Step 9
+  loads `work-rules:wame-time-logging` (rules `wame-time-logging-v1`) before it
+  computes the time-log proposal; without it no time log is proposed, the task
+  is still created, and the user is told to run `/plugin install work-rules@wame`.
+  `Skill` joins the skill's `allowed-tools`.
+- **Re-read before the time-log POST** (rules hard rule 3). Step 13 asks for
+  today's last own entry again; when another session logged in the meantime,
+  the entry is recomputed and shown again before the write.
+
+### Changed
+- **Time log in whole 5-minute blocks** (rules section 6). Measured minutes run
+  from the session start, or from the end of today's last own entry when that is
+  later, rounded up to whole minutes; the entry is the nearest block, half up,
+  and any work of 1 minute or more is at least one block (5 min). The entry
+  starts on the 5-minute grid and its room is cut against the end of the
+  current block (`ceil(now, block)`) — a cut is shown as `10 → 5 min`, a full
+  timesheet as `výkaz je plný do HH:MM` with nothing written. 0 measured
+  minutes → nothing proposed, and the Step 10 gate offers a manual entry.
+  Overlap avoidance and the time-zone contract (read UTC, post local) are
+  unchanged.
+- **`split_subtasks` follows the rules section 5 split.** Blocks go to the
+  subtasks by largest remainder on their estimates; a subtask that gets 0 blocks
+  has no entry and is named in the entry with the most blocks, in the
+  shared-entry format of rules section 4. Previously each share was re-rounded
+  on its own.
+- **An entry logged ahead of the clock now anchors the cursor.** Step 3.2 kept
+  today's last entry only when it ended before now, so an entry another session
+  logged into the current block was ignored and could be overlapped.
+- **Step 2.5 no longer adds `round_threshold_minutes` and `min_log_minutes`**;
+  `config.example.json` drops them. Existing values in the shared config are
+  left alone and ignored. `time_rounding_minutes` stays — it is the block.
+- **The estimate methodology is no longer copied into `SKILL.md`.** The
+  `## WAME estimate methodology` section is now a pointer: load
+  `work-rules:wame-estimate` (`wame-estimate-v3`) before the first estimate,
+  and stop with `/plugin install work-rules@wame` when it is missing. Step 6.4
+  and the drift note point there. The methodology and its numbers are
+  unchanged.
+- The Step 10 preview and the Step 15 report show the entry (start–end on the
+  grid, minutes), the measured minutes, the cursor and why, and a cut or the
+  reason nothing was logged; the "raw minutes" line is gone. The time-log
+  response goes to a per-run temp file instead of the fixed
+  `/tmp/tws_time.json`.
+
 ## [1.4.0] — 2026-10-13
 
 ### Changed

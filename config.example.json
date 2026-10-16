@@ -5,8 +5,6 @@
   },
   "default_language": "sk",
   "time_rounding_minutes": 5,
-  "round_threshold_minutes": 4,
-  "min_log_minutes": 1,
   "time_cursor_strategy": "last_teamwork_timelog",
   "include_commit_hash_in_log_description": true,
   "is_billable_by_default": true,
