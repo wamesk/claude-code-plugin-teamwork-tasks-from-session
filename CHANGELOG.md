@@ -4,6 +4,21 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-10-20
+
+Task ids in a time-entry description are written in parentheses, `(45504762)`, the
+same way as commits — not as `#45504762`. Teamwork reads a `#word` of a new entry as a
+hashtag: it cut the id out of the text and created a global tag with that name, so
+17 shared entries of 2026-10-19/20 lost their task references and the tag list
+filled with 25 numbers and one colour (`#22c55e`). Follows `work-rules` 1.0.1
+(`wame-time-logging` section 4).
+
+### Fixed
+
+- The split-across-subtasks example of Step 9.2 names each subtask as `(<id>)`.
+- The Step 13 payload drops a `#` that stands right before a letter or a digit from
+  the description before the `POST`.
+
 ## [1.5.0] — 2026-10-16
 
 Why: time entries of 2–3 minutes showed up on the timesheet. The plugin family

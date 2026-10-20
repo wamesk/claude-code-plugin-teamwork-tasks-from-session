@@ -1194,9 +1194,12 @@ Edge cases:
 
   ```
   Spoločný záznam za 2 úlohy (spolu 15 min práce):
-  #<id> <subtask> — <čo sa spravilo>
-  #<id> <subtask> — <čo sa spravilo>
+  (<id>) <subtask> — <čo sa spravilo>
+  (<id>) <subtask> — <čo sa spravilo>
   ```
+
+  The id stands in parentheses, never as `#<id>` — Teamwork turns a `#word` of a
+  new entry into a global tag and cuts it from the text.
 
 ```bash
 # SUB_ESTS = the subtask estimates in Step 6.3 order as ONE string ("60 30 15");
@@ -1465,7 +1468,10 @@ is written as previewed.
 was delivered for the user/business, 1–2 sentences in `default_language`,
 technical detail only when it helps identify the work. Append `(commit: <hash>)`
 for the session's most relevant commit when
-`include_commit_hash_in_log_description == true`.
+`include_commit_hash_in_log_description == true`. No `#` right before a letter
+or a digit (rules section 4) — not `#45504762`, not a colour like `#22c55e`:
+Teamwork makes a global tag of it and cuts it from the text. The payload below
+drops such a `#` whatever the description says.
 
 ```bash
 # `// true` would read a deliberate `false` as `true` (jq's `//` skips false too).
@@ -1483,7 +1489,7 @@ PAYLOAD=$(jq -nc \
   --arg date "$LOG_DATE" \
   --arg time "$LOG_TIME" \
   --argjson billable "$BILLABLE" \
-  '{timelog: {hours: 0, minutes: $minutes, description: $desc, date: $date, time: $time, isbillable: $billable}}')
+  '{timelog: {hours: 0, minutes: $minutes, description: ($desc | gsub("#+(?<c>[\\p{L}\\p{N}])"; "\(.c)")), date: $date, time: $time, isbillable: $billable}}')
 
 # A per-run temp file, never a fixed /tmp path — two sessions can run this
 # skill at once (rules section 10).
