@@ -17,7 +17,7 @@ actually took.
 ```
 
 Since 1.5.0 the plugin depends on **`work-rules`**, the tracker-independent
-WAME rules plugin: its `wame-time-logging` skill (rules `wame-time-logging-v1`)
+WAME rules plugin: its `wame-time-logging` skill (rules `wame-time-logging-v2`)
 decides how the session time is logged, its `wame-estimate` skill (methodology
 `wame-estimate-v3`) how the task is estimated. It is declared in
 `dependencies` and installed with this plugin. If it is missing, the skill
@@ -149,7 +149,7 @@ The skill then walks you through:
    idempotency guard that searches by name before any retry.
 10. **Creates subtasks** with `parentTaskId` and per-role assignees.
 11. **Logs the real session time** back to Teamwork by the rules
-    `wame-time-logging-v1` (loaded from `work-rules:wame-time-logging`) — one
+    `wame-time-logging-v2` (loaded from `work-rules:wame-time-logging`) — one
     entry in whole 5-minute blocks on the 5-minute grid, written in a business
     tone with an optional `(commit: <hash>)` suffix. The minutes are measured
     from the session start, or from the end of your last entry of the day when

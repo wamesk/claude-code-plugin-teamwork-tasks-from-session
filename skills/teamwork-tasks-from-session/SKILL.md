@@ -180,7 +180,7 @@ jq '
   # that teamwork-task owns. Booleans are defaulted with null_or() instead.
   def null_or($d): if . == null then $d else . end;
   .default_language                                   //= "sk"
-# The block of the time-logging rules (`wame-time-logging-v1`). 1.5.0 no longer
+# The block of the time-logging rules (`wame-time-logging-v2`). 1.5.0 no longer
 # adds `round_threshold_minutes` / `min_log_minutes`: the rules log whole blocks
 # only and ignore both. They are not deleted either — the file is shared, and
 # another plugin of the family may still read them until it is updated.
@@ -1067,7 +1067,7 @@ Only when `LOG_TIME_ENABLED != false` (the `--log-time` flag and the Step 3.5
 ### Step 9.0 — Load the time-logging rules
 
 The rules are not copied into this plugin. They are version
-`wame-time-logging-v1`, the `wame-time-logging` skill of the `work-rules`
+`wame-time-logging-v2`, the `wame-time-logging` skill of the `work-rules`
 plugin — the one source for every WAME plugin that writes time, whatever the
 tracker. Load it with the Skill tool (`work-rules:wame-time-logging`) before
 computing anything below. This step implements its section 6 (one entry for a
@@ -1190,12 +1190,16 @@ Edge cases:
   from `CURSOR` in subtask order. A subtask that gets **0 blocks** has no entry
   of its own: it is named in the entry with the most blocks (tie: the earlier
   subtask), in the shared-entry format of rules section 4 — the owner first, the
-  rest in subtask order:
+  rest in subtask order. The first line gives the number of tasks and **no
+  minutes**; each line is short — the subtask's code when its name starts with one
+  (the text before the first ` — `, when it is one word), otherwise the name cut to
+  about 40 characters, then about 10 words of what was done. Never the full name,
+  never two sentences:
 
   ```
-  Spoločný záznam za 2 úlohy (spolu 15 min práce):
-  (<id>) <subtask> — <čo sa spravilo>
-  (<id>) <subtask> — <čo sa spravilo>
+  Spoločný záznam za 2 úlohy:
+  (<id>) <short label> — <čo sa spravilo>
+  (<id>) <short label> — <čo sa spravilo>
   ```
 
   The id stands in parentheses, never as `#<id>` — Teamwork turns a `#word` of a
@@ -1465,8 +1469,10 @@ change in the report). A failed re-read is a `⚠` line, and the confirmed entry
 is written as previewed.
 
 **Business-tone description** (same rule as `teamwork-task` Step 6.8): write what
-was delivered for the user/business, 1–2 sentences in `default_language`,
-technical detail only when it helps identify the work. Append `(commit: <hash>)`
+was delivered for the user/business, **one short sentence of about 12 words** in
+`default_language`, technical detail only when it helps identify the work.
+**Never state the time** — no minutes, no `spolu 15 min práce`, no `(15 min)`:
+the entry's own minutes say it (rules section 4). Append `(commit: <hash>)`
 for the session's most relevant commit when
 `include_commit_hash_in_log_description == true`. No `#` right before a letter
 or a digit (rules section 4) — not `#45504762`, not a colour like `#22c55e`:
@@ -1697,7 +1703,7 @@ fi
 **Cieľ:** <PROJECT_NAME> › <TASKLIST_NAME>  <(+ "subtask of #<PARENT_TASK_ID>")>
 **Odhad:** <EST> min · **Priradené:** <name / nepriradené>
 
-### ⏱ Zalogovaný čas (pravidlá `wame-time-logging-v1`)
+### ⏱ Zalogovaný čas (pravidlá `wame-time-logging-v2`)
 - Kurzor: <LOG_TIME as HH:MM> — <why: "začiatok session 10:03 → blok 10:00" |
   "posledný záznam dnes skončil 10:03 → 10:05">
 - <LOG_TIME as HH:MM>–<LOG_END_HM> (<LOG_DATE>) · <DURATION_MIN> min · <primary task>
@@ -1732,7 +1738,7 @@ fi
   Step 9 is unconditional when `avoid_overlap == true`, and Step 13 re-reads the
   last own entry right before the POST)
 - Never proposes an entry that is not whole 5-minute blocks — no 1–4 minute
-  entry, no 7 or 13 (`wame-time-logging-v1`); only minutes the user types
+  entry, no 7 or 13 (`wame-time-logging-v2`); only minutes the user types
   are written as typed
 - Never proposes a time log without the `work-rules:wame-time-logging` skill,
   and never estimates without `work-rules:wame-estimate` — no rules from memory

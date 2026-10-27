@@ -4,6 +4,22 @@ All notable changes to the `teamwork-tasks-from-session` plugin are documented
 in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] — 2026-10-27
+
+A time-entry description stated the work time (`spolu 15 min práce`) and ran long. It now
+says what was done, briefly, and never the time — the minutes of the entry already say it.
+Follows `work-rules` 1.1.0 (rules `wame-time-logging-v2`, section 4).
+
+### Changed
+
+- Step 13: the business-tone description of the session entry is one short sentence of
+  about 12 words and states no minutes.
+- Step 9.2: the shared entry of the split across subtasks opens with
+  `Spoločný záznam za N úlohy:` — no minutes — and has one short line per subtask,
+  `(<id>) <short label> — <what was done>` (the subtask's code or its name cut to about
+  40 characters, never the full name).
+- References to the rules are now `wame-time-logging-v2`.
+
 ## [1.5.1] — 2026-10-20
 
 Task ids in a time-entry description are written in parentheses, `(45504762)`, the
